@@ -20,3 +20,11 @@ Spec: `docs/specs/2026-07-17-quality-platform-design.md`.
 
 Bump `VERSION`, merge to main, tag `quality-kit-v<VERSION>` on the merge
 commit, push the tag. Repos upgrade by re-running stamp.sh (new PR).
+
+## python-profile CI gap (v1)
+
+Repos stamped with `--profile python` get **no stamped CI workflow** in v1 —
+the drift gate + validate CI for python lands with Wave 3. Until then, python
+enforcement is local-only: pre-commit `validate-fast` + the companion
+post-run gate + the stamped local tooling. This is a deliberate, documented
+gap, not an oversight.

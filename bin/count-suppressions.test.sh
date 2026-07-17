@@ -20,12 +20,13 @@ const z = y;
 EOF
 printf 'v = 1  # noqa: E501\nw = 2  # type: ignore\n' > "$T/src/b.py"
 printf '// oxlint-disable everything\n' > "$T/node_modules/pkg/c.ts"   # must NOT count
+printf '// @ts-expect-error\nexport {};\n' > "$T/src/c.mts"
 
 out="$(bash "$DIR/count-suppressions.sh" "$T")"
 python3 -c "
 import json,sys
 d=json.loads('''$out''')
-assert d=={'oxlint-disable':1,'ts-expect-error':1,'ts-ignore':1,'noqa':1,'type-ignore':1}, d
+assert d=={'oxlint-disable':1,'ts-expect-error':2,'ts-ignore':1,'noqa':1,'type-ignore':1}, d
 " && ok "counts + vendored exclusion" || bad "counts + vendored exclusion" "$out"
 
 out2="$(bash "$DIR/count-suppressions.sh" "$(mktemp -d)")"

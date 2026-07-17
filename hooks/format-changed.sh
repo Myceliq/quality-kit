@@ -6,7 +6,7 @@ set -uo pipefail
 for f in "$@"; do
   [ -f "$f" ] || continue
   case "$f" in
-    *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.json|*.jsonc|*.md|*.css|*.yml|*.yaml)
+    *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.mts|*.cts|*.json|*.jsonc|*.md|*.css|*.yml|*.yaml)
       npx --no-install oxfmt "$f" >/dev/null 2>&1 || true ;;
     *.py)
       ruff format "$f" >/dev/null 2>&1 || true ;;

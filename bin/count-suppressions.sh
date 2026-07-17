@@ -9,7 +9,7 @@ EX=(--exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist
     --exclude-dir=build --exclude-dir=coverage --exclude-dir=.quality
     --exclude-dir=.git --exclude-dir=.venv)
 cnt() { grep -ro "${EX[@]}" -E "$1" ${2} . 2>/dev/null | wc -l | tr -d ' ' || true; }
-TS='--include=*.ts --include=*.tsx --include=*.js --include=*.jsx'
+TS='--include=*.ts --include=*.tsx --include=*.js --include=*.jsx --include=*.mjs --include=*.cjs --include=*.mts --include=*.cts'
 PY='--include=*.py'
 printf '{"oxlint-disable":%s,"ts-expect-error":%s,"ts-ignore":%s,"noqa":%s,"type-ignore":%s}\n' \
   "$(cnt 'oxlint-disable' "$TS")" \
