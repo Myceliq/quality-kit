@@ -1,0 +1,11 @@
+# quality-kit stamped file — do not edit in the repo; change the kit instead.
+.PHONY: validate validate-fast format format-check lint typecheck test-unit
+
+format: ; ruff format .
+format-check: ; ruff format --check .
+lint: ; ruff check .
+typecheck: ; pyright
+test-unit: ; pytest -q
+
+validate: format-check lint typecheck test-unit
+validate-fast: format-check lint typecheck test-unit
