@@ -40,59 +40,126 @@ else
 fi
 
 python3 - "$KIT" "$REPO" "$PROFILE" <<'PY' || fail=1
-import json, os, re, sys
+import json, os, sys
 kit, repo, profile = sys.argv[1:4]
 rc = 0
 def err(m):
     global rc; rc = 1; print(f"DRIFT: {m}", file=sys.stderr)
+
+def _scan_outside_strings(s, on_char):
+    # Char-by-char pass tracking JSON string state (double quotes, backslash
+    # escapes); everything inside a string literal is copied verbatim. This
+    # is what stops a decoy payload like {"_a":"/*", ...,"_b":"*/"} — a real
+    # comment marker split across two separate string VALUES — from being
+    # misread as an actual comment span: a blind whole-file regex would
+    # delete everything between the two string literals (hiding whatever
+    # sits between them from this gate) while tsc's own string-aware parser
+    # still honors it. on_char(out, s, i, n) handles one char outside a
+    # string and returns the next index; it must append to out itself.
+    out, i, n, in_str, esc = [], 0, len(s), False, False
+    while i < n:
+        c = s[i]
+        if in_str:
+            out.append(c)
+            if esc: esc = False
+            elif c == "\\": esc = True
+            elif c == '"': in_str = False
+            i += 1
+        elif c == '"':
+            in_str = True; out.append(c); i += 1
+        else:
+            i = on_char(out, s, i, n)
+    return "".join(out)
+
+def _drop_comment(out, s, i, n):
+    if s[i:i+2] == "//":
+        j = s.find("\n", i); return n if j == -1 else j
+    if s[i:i+2] == "/*":
+        j = s.find("*/", i + 2); return n if j == -1 else j + 2
+    out.append(s[i]); return i + 1
+
+def _drop_trailing_comma(out, s, i, n):
+    if s[i] == ",":
+        j = i + 1
+        while j < n and s[j] in " \t\r\n": j += 1
+        if j < n and s[j] in "}]":
+            return i + 1  # drop the comma itself
+    out.append(s[i]); return i + 1
+
 def jsonc(p):  # tolerate // and /* */ comments + trailing commas (tsconfig style)
     s = open(p).read()
-    s = re.sub(r"/\*.*?\*/", "", s, flags=re.S)
-    s = re.sub(r"//[^\n]*", "", s)
-    return json.loads(re.sub(r",(\s*[}\]])", r"\1", s))
+    s = _scan_outside_strings(s, _drop_comment)
+    s = _scan_outside_strings(s, _drop_trailing_comma)
+    return json.loads(s)
 
-if profile != "python":
-    canon = json.load(open(os.path.join(kit, f"ts/package-scripts.{profile}.json")))
-    scripts = json.load(open(os.path.join(repo, "package.json"))).get("scripts", {})
-    for k, v in canon.items():
-        if scripts.get(k) != v:
-            err(f"package.json scripts.{k} != kit canonical — restore: {v!r}")
-    ts = jsonc(os.path.join(repo, "tsconfig.json"))
-    ext = ts.get("extends", "")
-    if "tsconfig.quality.json" not in (ext if isinstance(ext, str) else " ".join(ext)):
-        err("tsconfig.json must extend ./tsconfig.quality.json")
-    pending = json.load(open(os.path.join(repo, ".quality-kit.json"))).get("pendingFlags", [])
-    protected = jsonc(os.path.join(kit, "ts/tsconfig.strict.json"))["compilerOptions"]
-    for flag, want in protected.items():
-        got = ts.get("compilerOptions", {}).get(flag, want)
-        if got != want and flag not in pending:
-            err(f"tsconfig relaxes protected flag {flag} — revert, or stage it via .quality-kit.json pendingFlags")
+def main():
+    if profile != "python":
+        pkg = json.load(open(os.path.join(repo, "package.json")))
+        canon = json.load(open(os.path.join(kit, f"ts/package-scripts.{profile}.json")))
+        scripts = pkg.get("scripts", {})
+        for k, v in canon.items():
+            if scripts.get(k) != v:
+                err(f"package.json scripts.{k} != kit canonical — restore: {v!r}")
+        # profile also picks the oxlint/script preset among nextjs/vite/node —
+        # a relabel within that family (e.g. nextjs -> node) isn't caught by
+        # the byte-owned same() checks since they'd just compare against the
+        # new profile's own files. Cross-check against what's actually
+        # installed: next/react in package.json imply which presets are safe.
+        deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+        if "next" in deps and profile != "nextjs":
+            err(f"profile {profile} inconsistent with dependencies (next present) — restore correct profile and re-stamp")
+        elif "react" in deps and profile not in ("nextjs", "vite"):
+            err(f"profile {profile} inconsistent with dependencies (react present) — restore correct profile and re-stamp")
+        ts = jsonc(os.path.join(repo, "tsconfig.json"))
+        ext = ts.get("extends", "")
+        # exact match required, and it must be the LAST entry in an array —
+        # TS applies extends left-to-right with later entries winning, so
+        # quality-last is what makes its strict flags actually govern; a
+        # substring match would let ./evil.json trail it, or a decoy path
+        # like ./sub/tsconfig.quality.json stand in for the real fragment.
+        last = ext if isinstance(ext, str) else (ext[-1] if ext else None)
+        if last != "./tsconfig.quality.json":
+            err("tsconfig extends must end with ./tsconfig.quality.json (exact entry, last position)")
+        pending = json.load(open(os.path.join(repo, ".quality-kit.json"))).get("pendingFlags", [])
+        protected = jsonc(os.path.join(kit, "ts/tsconfig.strict.json"))["compilerOptions"]
+        for flag, want in protected.items():
+            got = ts.get("compilerOptions", {}).get(flag, want)
+            if got != want and flag not in pending:
+                err(f"tsconfig relaxes protected flag {flag} — revert, or stage it via .quality-kit.json pendingFlags")
 
-# the merged .claude/settings.json must still carry the kit's hook entries
-# under the same event with the same behavior-defining fields (matcher +
-# type/command). Extra metadata fields and repo-added entries are fine —
-# checking whole-object equality would false-positive on benign schema
-# evolution; checking command presence alone would miss matcher tampering.
-cs_path = os.path.join(repo, ".claude/settings.json")
-cs = json.load(open(cs_path)) if os.path.exists(cs_path) else {}
-frag = json.load(open(os.path.join(kit, "hooks/claude-settings.json")))
-for event, entries in frag["hooks"].items():
-    for entry in entries:
-        want = [(h.get("type"), h.get("command")) for h in entry["hooks"]]
-        def covers(e):
-            got = [(h.get("type"), h.get("command")) for h in e.get("hooks", [])]
-            return e.get("matcher") == entry.get("matcher") and all(w in got for w in want)
-        if not any(covers(e) for e in cs.get("hooks", {}).get(event, [])):
-            err(f".claude/settings.json lost or altered the kit {event} hook — re-stamp to restore")
+    # the merged .claude/settings.json must still carry the kit's hook entries
+    # under the same event with the same behavior-defining fields (matcher +
+    # type/command). Extra metadata fields and repo-added entries are fine —
+    # checking whole-object equality would false-positive on benign schema
+    # evolution; checking command presence alone would miss matcher tampering.
+    cs_path = os.path.join(repo, ".claude/settings.json")
+    cs = json.load(open(cs_path)) if os.path.exists(cs_path) else {}
+    frag = json.load(open(os.path.join(kit, "hooks/claude-settings.json")))
+    for event, entries in frag["hooks"].items():
+        for entry in entries:
+            want = [(h.get("type"), h.get("command")) for h in entry["hooks"]]
+            def covers(e):
+                got = [(h.get("type"), h.get("command")) for h in e.get("hooks", [])]
+                return e.get("matcher") == entry.get("matcher") and all(w in got for w in want)
+            if not any(covers(e) for e in cs.get("hooks", {}).get(event, [])):
+                err(f".claude/settings.json lost or altered the kit {event} hook — re-stamp to restore")
 
-base = json.load(open(os.path.join(repo, ".quality/suppression-baseline.json")))
-import subprocess
-now = json.loads(subprocess.run(
-    ["bash", os.path.join(kit, "bin/count-suppressions.sh"), repo],
-    capture_output=True, text=True, check=True).stdout)
-for k, allowed in base.items():
-    if now.get(k, 0) > allowed:
-        err(f"suppression budget exceeded: {k} {now[k]} > baseline {allowed} — remove them or bump .quality/suppression-baseline.json in this PR with justification")
+    base = json.load(open(os.path.join(repo, ".quality/suppression-baseline.json")))
+    import subprocess
+    now = json.loads(subprocess.run(
+        ["bash", os.path.join(kit, "bin/count-suppressions.sh"), repo],
+        capture_output=True, text=True, check=True).stdout)
+    for k, allowed in base.items():
+        if now.get(k, 0) > allowed:
+            err(f"suppression budget exceeded: {k} {now[k]} > baseline {allowed} — remove them or bump .quality/suppression-baseline.json in this PR with justification")
+
+try:
+    main()
+except Exception as e:
+    # remedy-naming contract must hold even on crash paths — no bare
+    # tracebacks out of a gate that's supposed to always say what to do.
+    print(f"DRIFT: internal gate error ({type(e).__name__}) — fix the malformed file it names or re-stamp", file=sys.stderr)
+    sys.exit(1)
 sys.exit(rc)
 PY
 
