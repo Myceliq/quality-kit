@@ -74,10 +74,18 @@ if profile != "python":
     dd = pkg.setdefault("devDependencies", {})
     dd.update(j(os.path.join(kit, "ts/pins.json")))
     w(pkg_path, pkg)
-    # tsconfig.json: point extends at the stamped fragment
+    # tsconfig.json: point extends at the stamped fragment, preserving any
+    # pre-existing chain (TS 5+ array form, quality fragment last so its
+    # strict flags still govern)
     ts_path = os.path.join(repo, "tsconfig.json")
     ts = j(ts_path)
-    ts["extends"] = "./tsconfig.quality.json"
+    prev = ts.get("extends")
+    if prev and prev != "./tsconfig.quality.json":
+        prevs = prev if isinstance(prev, list) else [prev]
+        prevs = [p for p in prevs if p != "./tsconfig.quality.json"]
+        ts["extends"] = prevs + ["./tsconfig.quality.json"]
+    else:
+        ts["extends"] = "./tsconfig.quality.json"
     w(ts_path, ts)
 
 # .claude/settings.json: deep-merge the hooks fragment (kit entries replace

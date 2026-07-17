@@ -45,6 +45,22 @@ assert ts['extends']=='./tsconfig.quality.json'
 grep -q 'quality-kit:begin' "$R/AGENTS.md" && grep -q '# Fixture' "$R/AGENTS.md" \
   && ok "AGENTS.md section appended, original kept" || bad "AGENTS.md section" "marker or original missing"
 
+# tsconfig extends chain: pre-existing extends preserved, not clobbered
+# (TS 5+ array form, quality fragment appended last so its strict flags govern)
+E="$(mktemp -d)"
+(cd "$E" && git init -q && git config core.hooksPath /dev/null \
+  && printf '{"extends":"@base/x","compilerOptions":{}}' > tsconfig.json \
+  && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+bash "$S" "$E" --profile nextjs
+python3 -c "
+import json
+ts=json.load(open('$E/tsconfig.json'))
+assert ts['extends']==['@base/x','./tsconfig.quality.json'], ts
+" && ok "tsconfig extends chain preserved" || bad "tsconfig extends chain preserved" "assertion failed"
+(cd "$E" && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m stamped)
+bash "$S" "$E" --profile nextjs
+[ -z "$(cd "$E" && git status --porcelain)" ] && ok "idempotent re-stamp (extends array)" || bad "idempotent re-stamp (extends array)" "$(cd "$E" && git status --porcelain)"
+
 # idempotency: second stamp changes nothing
 (cd "$R" && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m stamped)
 bash "$S" "$R" --profile nextjs
