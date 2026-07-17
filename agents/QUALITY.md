@@ -1,0 +1,28 @@
+<!-- quality-kit:begin -->
+## Quality gates (quality-kit — stamped, do not edit this section by hand)
+
+Validation contract, identical local and CI (`npm run` / `make` per this repo's
+`.quality-kit.json` runner):
+
+- `validate` — full gate: format:check → lint → typecheck → unit tests → repo
+  extras → build. CI runs exactly this.
+- `validate:fast` (make: `validate-fast`) — repair loop: format:check → lint →
+  typecheck → affected tests. Run after EVERY implementation attempt and
+  before reporting done. Hooks and pre-commit run it for you; delegates
+  without hooks must run it themselves.
+
+Rules (CI drift gate enforces these — a PR that violates them cannot merge):
+
+- Never edit stamped files (`.quality/`, `oxlint.config.ts`, `oxfmt.config.ts`,
+  `tsconfig.quality.json`, `.github/workflows/quality.yml`, `.codex/hooks.json`).
+  Change cockpit `quality-kit/` and re-stamp instead.
+- Never add lint/type suppressions (`oxlint-disable`, `@ts-expect-error`,
+  `@ts-ignore`, `noqa`, `type: ignore`) to get green. A genuinely needed one =
+  bump `.quality/suppression-baseline.json` in the same PR and justify it in
+  the PR body.
+- Never relax tsconfig strict flags. Sanctioned staging lives ONLY in
+  `.quality-kit.json` `pendingFlags`.
+- Never delete or skip tests to get green.
+- Evidence before claiming progress: paste the tail of the passing validate
+  output. If a check doesn't exist yet, say that plainly — don't fake it.
+<!-- quality-kit:end -->
