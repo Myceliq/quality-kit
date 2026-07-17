@@ -40,7 +40,7 @@ printf '{"no":"path"}' | bash "$DIR/format-changed-adapter.sh" && ok "adapter no
 SV="$DIR/stop-validate.sh"
 mk_repo() { # $1=fail(0|1) → fixture git repo whose validate-fast exits $1
   local r; r="$(mktemp -d)"
-  (cd "$r" && git init -q && git commit -q --allow-empty -m init)
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null && git commit -q --allow-empty -m init)
   printf '{"version":"0.1.0","profile":"python","runner":"make","pendingFlags":[]}' > "$r/.quality-kit.json"
   printf 'validate-fast:\n\t@exit %s\n' "$1" > "$r/Makefile"
   (cd "$r" && git add -A && git commit -q -m fixture)
@@ -54,7 +54,7 @@ RF=$(mk_repo 1)
 (cd "$RF" && echo x > code.ts)
 set +e; err=$( (cd "$RF" && echo '{}' | bash "$SV") 2>&1 >/dev/null ); rc=$?; set -e
 [ "$rc" = 2 ] && echo "$err" | grep -q "validate:fast FAILED" && ok "dirty+red blocks with exit 2" || bad "dirty+red blocks with exit 2" "rc=$rc err=$err"
-(cd "$RF" && printf '{"stop_hook_active": true}' | bash "$SV" 2>/dev/null); rc=$?
+set +e; (cd "$RF" && printf '{"stop_hook_active": true}' | bash "$SV" 2>/dev/null); rc=$?; set -e
 [ "$rc" = 0 ] && ok "stop_hook_active releases (no livelock)" || bad "stop_hook_active releases (no livelock)" "rc=$rc"
 (cd "$(mktemp -d)" && git init -q . && echo '{}' | bash "$SV") && ok "unstamped repo no-op" || bad "unstamped repo no-op" "blocked"
 
