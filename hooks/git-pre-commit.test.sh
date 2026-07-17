@@ -30,13 +30,17 @@ U="$(mktemp -d)"; (cd "$U" && git init -q && git config core.hooksPath /dev/null
 
 # Regression: repo path containing a shell-metachar quote must not break runner
 # detection (a naive python3 -c "...'$PATH'..." interpolation breaks here and
-# silently falls back to npm, skipping the configured make runner).
+# silently falls back to npm). The make path is red (exit 1); the npm fallback
+# path is deliberately made green (exit 0) via a package.json stub — so a buggy
+# fallback-to-npm is indistinguishable from correct-make ONLY if both fail; here
+# only the buggy path succeeds, giving the assertion teeth.
 Q="$T/qu'ote"; mkdir -p "$Q"
 (cd "$Q" && git init -q && git config core.hooksPath /dev/null && git -c user.name=ci -c user.email=ci@example.com commit -q --allow-empty -m init)
 printf '{"version":"0.1.0","profile":"python","runner":"make","pendingFlags":[]}' > "$Q/.quality-kit.json"
 printf 'validate-fast:\n\t@exit 1\n' > "$Q/Makefile"
+printf '{"scripts":{"validate:fast":"true"}}' > "$Q/package.json"
 rc=0; (cd "$Q" && echo x > f.txt && git add f.txt && bash "$HOOK" 2>/dev/null) || rc=$?
 [ "$rc" != 0 ] && ok "quoted repo path still resolves runner (blocked as make, not npm no-op)" \
-  || bad "quoted repo path still resolves runner" "allowed (runner detection silently fell back)"
+  || bad "quoted repo path still resolves runner" "allowed (runner detection silently fell back to npm)"
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
