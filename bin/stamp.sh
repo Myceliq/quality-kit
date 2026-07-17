@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# What: stamp (or update) the quality-kit standard into a target repo.
+# Where: quality-kit/bin; run from cockpit against any fleet repo.
+# Why:  one write path for the fleet standard — byte-owned files are copied,
+#       shared files (package.json, tsconfig, AGENTS.md, .claude/settings.json)
+#       are merged non-destructively; a manifest makes local edits detectable.
+set -euo pipefail
+KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="" PROFILE="" FORCE=0
+while [ $# -gt 0 ]; do case "$1" in
+  --profile) PROFILE="${2:?}"; shift 2 ;;
+  --force)   FORCE=1; shift ;;
+  -*)        echo "unknown flag $1" >&2; exit 64 ;;
+  *)         REPO="$1"; shift ;;
+esac; done
+[ -n "$REPO" ] && [ -d "$REPO" ] || { echo "usage: stamp.sh <repo> --profile <nextjs|vite|node|python> [--force]" >&2; exit 64; }
+case "$PROFILE" in nextjs|vite|node|python) ;; *) echo "unknown profile: $PROFILE" >&2; exit 64 ;; esac
+REPO="$(cd "$REPO" && pwd)"
+VERSION="$(cat "$KIT/VERSION")"
+
+# refuse to clobber locally-modified stamped files unless --force
+# Scope: the manifest guards BYTE-OWNED files only. Merged files
+# (package.json, tsconfig.json, AGENTS.md, .claude/settings.json) are
+# deliberately outside it: re-stamp is canonical-wins on kit-owned keys,
+# and check-drift.sh rule-checks them in CI — the unforgeable layer.
+if [ -f "$REPO/.quality/manifest.sha256" ] && [ "$FORCE" -ne 1 ]; then
+  if ! (cd "$REPO" && sha256sum --check --quiet .quality/manifest.sha256 2>/dev/null); then
+    echo "stamped files modified locally — inspect the diff, then rerun with --force" >&2
+    exit 65
+  fi
+fi
+
+mkdir -p "$REPO/.quality" "$REPO/.github/workflows" "$REPO/.claude" "$REPO/.codex"
+STAMPED=()
+put() { install -m "$2" "$KIT/$1" "$REPO/$3"; STAMPED+=("$3"); }
+
+put hooks/format-changed.sh         755 .quality/format-changed.sh
+put hooks/format-changed-adapter.sh 755 .quality/format-changed-adapter.sh
+put hooks/stop-validate.sh          755 .quality/stop-validate.sh
+put hooks/codex-hooks.json          644 .codex/hooks.json
+
+RUNNER=npm
+if [ "$PROFILE" = python ]; then
+  RUNNER=make
+  put py/ruff.toml         644 ruff.toml
+  put py/pyrightconfig.json 644 pyrightconfig.json
+  put py/Makefile.quality  644 Makefile.quality
+  touch "$REPO/Makefile"
+  grep -q '^include Makefile.quality$' "$REPO/Makefile" || printf '\ninclude Makefile.quality\n' >> "$REPO/Makefile"
+else
+  put "ts/oxlint.config.$PROFILE.ts" 644 oxlint.config.ts
+  put ts/oxfmt.config.ts             644 oxfmt.config.ts
+  put ts/tsconfig.strict.json        644 tsconfig.quality.json
+  put ts/quality.yml                 644 .github/workflows/quality.yml
+fi
+
+# python3 stdlib merges for shared files
+python3 - "$KIT" "$REPO" "$PROFILE" "$VERSION" "$RUNNER" <<'PY'
+import json, os, sys
+kit, repo, profile, version, runner = sys.argv[1:6]
+j = lambda p: json.load(open(p)) if os.path.exists(p) else {}
+def w(p, d): open(p, "w").write(json.dumps(d, indent=2) + "\n")
+
+# .quality-kit.json (preserve an existing pendingFlags list across re-stamps)
+qk_path = os.path.join(repo, ".quality-kit.json")
+pending = j(qk_path).get("pendingFlags", [])
+w(qk_path, {"version": version, "profile": profile, "runner": runner, "pendingFlags": pending})
+
+if profile != "python":
+    # package.json: canonical scripts win; other scripts and fields preserved
+    pkg_path = os.path.join(repo, "package.json")
+    pkg = j(pkg_path) or {"name": os.path.basename(repo), "private": True}
+    pkg.setdefault("scripts", {}).update(j(os.path.join(kit, f"ts/package-scripts.{profile}.json")))
+    dd = pkg.setdefault("devDependencies", {})
+    dd.update(j(os.path.join(kit, "ts/pins.json")))
+    w(pkg_path, pkg)
+    # tsconfig.json: point extends at the stamped fragment
+    ts_path = os.path.join(repo, "tsconfig.json")
+    ts = j(ts_path)
+    ts["extends"] = "./tsconfig.quality.json"
+    w(ts_path, ts)
+
+# .claude/settings.json: deep-merge the hooks fragment (kit entries replace
+# same-event entries whose command mentions .quality/, others preserved)
+cs_path = os.path.join(repo, ".claude/settings.json")
+cs = j(cs_path)
+frag = j(os.path.join(kit, "hooks/claude-settings.json"))
+hooks = cs.setdefault("hooks", {})
+for event, entries in frag["hooks"].items():
+    kept = [e for e in hooks.get(event, [])
+            if not any(".quality/" in h.get("command", "") for h in e.get("hooks", []))]
+    hooks[event] = kept + entries
+w(cs_path, cs)
+
+# AGENTS.md: replace/append the marker-delimited section
+qm = open(os.path.join(kit, "agents/QUALITY.md")).read()
+am_path = os.path.join(repo, "AGENTS.md")
+am = open(am_path).read() if os.path.exists(am_path) else ""
+b, e = "<!-- quality-kit:begin -->", "<!-- quality-kit:end -->"
+if b in am and e in am:
+    am = am[: am.index(b)] + qm + am[am.index(e) + len(e):].lstrip("\n")
+else:
+    am = (am.rstrip() + "\n\n" if am.strip() else "") + qm
+open(am_path, "w").write(am if am.endswith("\n") else am + "\n")
+PY
+
+# suppression baseline: initialize from current repo state on first stamp only
+# (a re-stamp must not silently absorb suppressions added since — that is the
+# drift gate's job to reject)
+BASE="$REPO/.quality/suppression-baseline.json"
+[ -f "$BASE" ] || bash "$KIT/bin/count-suppressions.sh" "$REPO" > "$BASE"
+STAMPED+=(.quality/suppression-baseline.json)
+
+# manifest over byte-owned files (merged files are rule-checked by drift, not hashed)
+(cd "$REPO" && sha256sum "${STAMPED[@]}" > .quality/manifest.sha256)
+echo "stamped $REPO (profile=$PROFILE, kit=$VERSION)"
