@@ -24,5 +24,9 @@ export default defineConfig({
     "typescript/no-unsafe-member-access": "off",
     "typescript/no-unsafe-return": "off",
     "typescript/no-unsafe-type-assertion": "off",
+    // Keep the rule for `return undefined` / `x = undefined`, but stop it
+    // stripping type-REQUIRED argument undefineds — e.g. Vitest 4's
+    // `mockResolvedValue(undefined)`, where removing the arg is a type error.
+    "unicorn/no-useless-undefined": ["error", { checkArguments: false }],
   },
 });
