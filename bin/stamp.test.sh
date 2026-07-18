@@ -31,7 +31,7 @@ done
 python3 -c "
 import json
 qk=json.load(open('$R/.quality-kit.json'))
-assert qk=={'version':'0.1.0','profile':'nextjs','runner':'npm','pendingFlags':[]}, qk
+assert qk=={'version':'0.1.1','profile':'nextjs','runner':'npm','pendingFlags':[]}, qk
 p=json.load(open('$R/package.json'))
 assert p['scripts']['dev']=='next dev', 'existing scripts preserved'
 assert 'validate' in p['scripts'] and 'validate:fast' in p['scripts']
