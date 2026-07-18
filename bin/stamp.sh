@@ -122,3 +122,7 @@ STAMPED+=(.quality/suppression-baseline.json)
 # manifest over byte-owned files (merged files are rule-checked by drift, not hashed)
 (cd "$REPO" && sha256sum "${STAMPED[@]}" > .quality/manifest.sha256)
 echo "stamped $REPO (profile=$PROFILE, kit=$VERSION)"
+# Point the operator at the blocking gotchas before they try to commit — most
+# stamp PRs stall on one of these (npm ci reconcile, .claude gitignore, the
+# first-commit hook bootstrap, protected-path override).
+echo "→ before committing: read 'Stamping a repo — known gotchas' in quality-kit/README.md"
