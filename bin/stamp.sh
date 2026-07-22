@@ -61,10 +61,26 @@ kit, repo, profile, version, runner = sys.argv[1:6]
 j = lambda p: json.load(open(p)) if os.path.exists(p) else {}
 def w(p, d): open(p, "w").write(json.dumps(d, indent=2) + "\n")
 
-# .quality-kit.json (preserve an existing pendingFlags list across re-stamps)
+# .quality-kit.json — the stamper owns version/profile/runner; every other key
+# is repo-owned sanctioned variation (pendingFlags, ruleOverrides,
+# ignoreOverrides) and must survive a re-stamp byte-exact. A re-stamp that
+# silently reset a burn-down count would erase the ratchet's memory.
 qk_path = os.path.join(repo, ".quality-kit.json")
-pending = j(qk_path).get("pendingFlags", [])
-w(qk_path, {"version": version, "profile": profile, "runner": runner, "pendingFlags": pending})
+prev = j(qk_path)
+# start from the full previous object (preserves any top-level key the kit
+# doesn't know about yet, same preserve-unknown idiom as the package.json/
+# tsconfig/settings merges below) and only overlay what the stamper owns
+overrides = dict(prev.get("ruleOverrides") or {})
+overrides.setdefault("burnDown", {})
+overrides.setdefault("permanent", {})
+qk = dict(prev)
+qk.update({
+    "version": version, "profile": profile, "runner": runner,
+    "pendingFlags": prev.get("pendingFlags", []),
+    "ruleOverrides": overrides,
+    "ignoreOverrides": prev.get("ignoreOverrides", []),
+})
+w(qk_path, qk)
 
 if profile != "python":
     # package.json: canonical scripts win; other scripts and fields preserved

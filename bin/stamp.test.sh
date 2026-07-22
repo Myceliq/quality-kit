@@ -31,7 +31,8 @@ done
 python3 -c "
 import json
 qk=json.load(open('$R/.quality-kit.json'))
-assert qk=={'version':'0.1.3','profile':'nextjs','runner':'npm','pendingFlags':[]}, qk
+assert qk=={'version':'0.2.0','profile':'nextjs','runner':'npm','pendingFlags':[],
+            'ruleOverrides':{'burnDown':{},'permanent':{}},'ignoreOverrides':[]}, qk
 p=json.load(open('$R/package.json'))
 assert p['scripts']['dev']=='next dev', 'existing scripts preserved'
 assert 'validate' in p['scripts'] and 'validate:fast' in p['scripts']
@@ -83,5 +84,28 @@ python3 -c "import json; assert json.load(open('$P/.quality-kit.json'))['runner'
 
 rc=0; bash "$S" "$R" --profile bogus 2>/dev/null || rc=$?
 [ "$rc" = 64 ] && ok "unknown profile usage error" || bad "unknown profile usage error" "rc=$rc"
+
+# repo-owned override keys survive a re-stamp byte-exact (same contract as
+# pendingFlags) — a reset here would wipe the ratchet's memory
+O="$(mktemp -d)"
+(cd "$O" && git init -q && git config core.hooksPath /dev/null \
+  && printf '{"name":"o"}' > package.json && printf '{}' > tsconfig.json \
+  && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+bash "$S" "$O" --profile node >/dev/null
+python3 -c "
+import json
+p='$O/.quality-kit.json'; d=json.load(open(p))
+d['ruleOverrides']['burnDown']={'func-style':12}
+d['ruleOverrides']['permanent']={'import/no-default-export':{'level':'off','why':'framework requires it'}}
+d['ignoreOverrides']=['src/generated/**']
+json.dump(d,open(p,'w'))"
+bash "$S" "$O" --profile node >/dev/null
+python3 -c "
+import json
+d=json.load(open('$O/.quality-kit.json'))
+assert d['ruleOverrides']['burnDown']=={'func-style':12}, d
+assert d['ruleOverrides']['permanent']['import/no-default-export']['why']=='framework requires it', d
+assert d['ignoreOverrides']==['src/generated/**'], d
+" && ok "override keys survive re-stamp" || bad "override keys survive re-stamp" "assertion failed"
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
