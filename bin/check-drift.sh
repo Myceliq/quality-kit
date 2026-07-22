@@ -92,7 +92,42 @@ def jsonc(p):  # tolerate // and /* */ comments + trailing commas (tsconfig styl
     s = _scan_outside_strings(s, _drop_trailing_comma)
     return json.loads(s)
 
+def check_overrides():
+    # Repo-owned rule overrides are sanctioned divergence, so their SHAPE is the
+    # only thing standing between "declared, diff-visible, ratcheted" and "free
+    # weakening". This runs on every profile and needs no toolchain — the count
+    # ratchet (which does) is a separate --ratchet pass.
+    qk = json.load(open(os.path.join(repo, ".quality-kit.json")))
+    ov = qk.get("ruleOverrides", {"burnDown": {}, "permanent": {}})
+    if not isinstance(ov, dict):
+        err("ruleOverrides must be an object with burnDown/permanent — re-stamp to restore the default shape")
+        return
+    burn, perm = ov.get("burnDown", {}), ov.get("permanent", {})
+    if not isinstance(burn, dict) or not isinstance(perm, dict):
+        err("ruleOverrides.burnDown and ruleOverrides.permanent must both be objects — re-stamp to restore the default shape")
+        return
+    for rule, count in burn.items():
+        # bool is an int subclass in python — exclude it explicitly, or
+        # {"rule": true} would sail through as count 1
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            err(f"ruleOverrides.burnDown[{rule}] must be a positive integer violation count (got {count!r}) — fix the count, or remove the entry if the burn-down is complete")
+    for rule, spec in perm.items():
+        if not isinstance(spec, dict):
+            err(f"ruleOverrides.permanent[{rule}] must be an object with level and why — see quality-kit/README.md")
+            continue
+        allowed = ("off",) if profile == "python" else ("off", "warn")
+        if spec.get("level") not in allowed:
+            err(f"ruleOverrides.permanent[{rule}].level must be one of {list(allowed)} (got {spec.get('level')!r}) — ruff has no warn severity, so the python profile accepts off only")
+        if not str(spec.get("why", "")).strip():
+            err(f"ruleOverrides.permanent[{rule}] needs a non-empty why — a permanent divergence is a judgment call and must state its reason")
+    for rule in set(burn) & set(perm):
+        err(f"rule {rule} is in both burnDown and permanent — pick one: burn it down, or justify it permanently")
+    ign = qk.get("ignoreOverrides", [])
+    if not isinstance(ign, list) or any(not isinstance(g, str) for g in ign):
+        err("ignoreOverrides must be a list of glob strings — fix .quality-kit.json")
+
 def main():
+    check_overrides()
     if profile != "python":
         pkg = json.load(open(os.path.join(repo, "package.json")))
         canon = json.load(open(os.path.join(kit, f"ts/package-scripts.{profile}.json")))

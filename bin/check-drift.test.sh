@@ -133,4 +133,52 @@ json.dump(d,open(p,'w'))"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*inconsistent with dependencies" && ok "profile relabeled within ts family (next dependency) caught" || bad "profile relabeled within ts family (next dependency) caught" "$out"
 
+# --- overrides schema (static, no toolchain needed) ---
+# helper: mutate a fresh fixture's .quality-kit.json, then run drift
+qk_mut() { python3 -c "
+import json,sys; p=sys.argv[1]; d=json.load(open(p)); exec(sys.argv[2]); json.dump(d,open(p,'w'))" "$1/.quality-kit.json" "$2"; }
+
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'x/y':{'level':'off','why':''}}"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*why" && ok "empty why rejected" || bad "empty why rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'x/y':{'level':'off','why':'ok'}}; d['ruleOverrides']['burnDown']={'x/y':3}"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*both" && ok "rule in both sections rejected" || bad "rule in both sections rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'x/y':{'level':'error','why':'ok'}}"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*level" && ok "bad permanent level rejected" || bad "bad permanent level rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['burnDown']={'x/y':0}"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*positive" && ok "zero burnDown count rejected" || bad "zero burnDown count rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['burnDown']={'x/y':'many'}"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*positive" && ok "non-int burnDown count rejected" || bad "non-int burnDown count rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ignoreOverrides']=[{'glob':'x'}]"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*ignoreOverrides" && ok "non-string ignoreOverrides rejected" || bad "non-string ignoreOverrides rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']='nope'"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*ruleOverrides" && ok "malformed ruleOverrides rejected" || bad "malformed ruleOverrides rejected" "$out"
+
+# a well-formed override set is clean
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'import/no-default-export':{'level':'off','why':'Next.js pages require default exports'}}; d['ignoreOverrides']=['src/generated/**']"
+run "$R" >/dev/null && ok "valid overrides stay clean" || bad "valid overrides stay clean" "$(run "$R" || true)"
+
+# python profile: warn is unrenderable in ruff, so it must be rejected there
+python3 -c "
+import json; p='$PYR/.quality-kit.json'; d=json.load(open(p))
+d['ruleOverrides']={'burnDown':{},'permanent':{'F401':{'level':'warn','why':'staged'}}}
+json.dump(d,open(p,'w'))"
+out="$(run "$PYR" || true)"
+echo "$out" | grep -q "DRIFT.*warn" && ok "python profile rejects warn level" || bad "python profile rejects warn level" "$out"
+python3 -c "
+import json; p='$PYR/.quality-kit.json'; d=json.load(open(p))
+d['ruleOverrides']={'burnDown':{},'permanent':{}}; json.dump(d,open(p,'w'))"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
