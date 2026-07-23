@@ -112,4 +112,59 @@ assert d.get('customRepoKey')=='keep', f'stamper dropped an unknown top-level re
 assert d['ruleOverrides'].get('futureSubkey')=={}, f'stamper dropped an unknown ruleOverrides subkey on re-stamp: {d}'
 " && ok "override keys survive re-stamp" || bad "override keys survive re-stamp" "assertion failed"
 
+# first stamp without a toolchain must still succeed, leaving burnDown empty and
+# naming the follow-up command (stamp itself stays offline and deterministic).
+# Deterministic regardless of the HOST's own tooling: baseline-rules.sh checks
+# THIS repo's own node_modules/.bin/oxlint (never populated here — no npm ci
+# ran), not any globally installed linter, so this can't flake on a box that
+# happens to have oxlint/ruff/uvx on PATH.
+N="$(mktemp -d)"
+(cd "$N" && git init -q && git config core.hooksPath /dev/null \
+  && printf '{"name":"n"}' > package.json && printf '{}' > tsconfig.json \
+  && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+out="$(bash "$S" "$N" --profile node 2>&1)"
+python3 -c "
+import json
+d=json.load(open('$N/.quality-kit.json'))
+assert d['ruleOverrides']['burnDown']=={}, d
+" && ok "first stamp without toolchain leaves burnDown empty" || bad "first stamp without toolchain leaves burnDown empty" "assertion failed"
+echo "$out" | grep -q "baseline-rules.sh" && ok "stamp names the baseline follow-up" || bad "stamp names the baseline follow-up" "$out"
+
+# a re-stamp must NOT regenerate or reset an existing burn-down
+python3 -c "
+import json; p='$N/.quality-kit.json'; d=json.load(open(p))
+d['ruleOverrides']['burnDown']={'func-style':7}; json.dump(d,open(p,'w'))"
+bash "$S" "$N" --profile node >/dev/null 2>&1
+python3 -c "
+import json
+d=json.load(open('$N/.quality-kit.json'))
+assert d['ruleOverrides']['burnDown']=={'func-style':7}, d
+" && ok "re-stamp does not regenerate the burn-down" || bad "re-stamp does not regenerate the burn-down" "assertion failed"
+
+# ORDERING REGRESSION: on a python first stamp the burn-down is seeded and THEN
+# ruff.toml is rendered. Reverse the two and the rendered file omits every rule
+# just seeded — the repo goes red on day one and can never match a fresh render.
+if command -v uvx >/dev/null 2>&1 || command -v ruff >/dev/null 2>&1; then
+  Y="$(mktemp -d)"
+  (cd "$Y" && git init -q && git config core.hooksPath /dev/null \
+    && printf 'import sys\nimport os\n\nx = 1\n' > a.py \
+    && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+  bash "$S" "$Y" --profile python >/dev/null 2>&1
+  python3 -c "
+import json
+d=json.load(open('$Y/.quality-kit.json'))
+burn=d['ruleOverrides']['burnDown']
+assert burn, 'first stamp should have seeded a burn-down from the real violations'
+toml=open('$Y/ruff.toml').read()
+for rule in burn:
+    assert rule in toml, (f'seeded rule {rule} missing from rendered ruff.toml — '
+                          'the render ran BEFORE the seed; swap the two blocks in stamp.sh')
+" && ok "python first stamp renders ruff.toml AFTER seeding" || bad "python first stamp renders ruff.toml AFTER seeding" "assertion failed"
+  # and the freshly stamped python repo must be drift-clean
+  KIT_DIR="$(cd "$(dirname "$S")/.." && pwd)" bash "$(dirname "$S")/check-drift.sh" "$Y" >/dev/null 2>&1 \
+    && ok "python first stamp is drift-clean" || bad "python first stamp is drift-clean" "drift gate rejected a fresh stamp"
+else
+  echo "SKIP python first-stamp ordering (no ruff/uvx available)"
+fi
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

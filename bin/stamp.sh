@@ -129,6 +129,39 @@ else:
 open(am_path, "w").write(am if am.endswith("\n") else am + "\n")
 PY
 
+# Burn-down baseline: generate from a real lint run whenever burnDown is EMPTY
+# — not literally "first stamp". stamp.sh adds oxlint/ruff to the repo's own
+# deps above, so on a genuine first stamp the linter usually isn't installed
+# yet and this is a no-op (see the else branch). The real seed happens on
+# whichever later re-stamp runs after npm ci, which still sees burnDown=={}.
+# Once ANY rule is seeded this block never runs again on that repo — a
+# re-stamp must not silently absorb violations added since, same contract as
+# the suppression baseline below. stamp.sh stays offline and deterministic:
+# when the toolchain is absent this is a no-op that names the follow-up command.
+FIRST_BURNDOWN="$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+print('1' if not (d.get('ruleOverrides') or {}).get('burnDown') else '0')" "$REPO/.quality-kit.json")"
+if [ "$FIRST_BURNDOWN" = 1 ]; then
+  # ponytail: baseline-rules.sh echoes its own "{}" to stdout before a non-zero
+  # exit (missing/crashed linter); `cmd || echo` would append a second "{}"
+  # onto that captured output instead of replacing it. Assign-then-fallback
+  # keeps the failure path a clean "{}" instead of corrupt concatenated JSON.
+  BURN="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" 2>/dev/null)" || BURN='{}'
+  if [ "$BURN" != "{}" ]; then
+    python3 - "$REPO/.quality-kit.json" "$BURN" <<'PY'
+import json, sys
+path, burn = sys.argv[1], json.loads(sys.argv[2])
+d = json.load(open(path))
+d["ruleOverrides"]["burnDown"] = burn
+open(path, "w").write(json.dumps(d, indent=2) + "\n")
+PY
+    echo "→ seeded ruleOverrides.burnDown with $(python3 -c "import json,sys;print(len(json.loads(sys.argv[1])))" "$BURN") rules from a lint run"
+  else
+    echo "→ toolchain absent — after install, seed the burn-down: quality-kit/bin/baseline-rules.sh $REPO"
+  fi
+fi
+
 # ruff.toml is a rendered file: kit base + this repo's declared overrides.
 # ORDERING: this must be the LAST thing that touches .quality-kit.json's
 # override keys before the manifest is hashed — it reads them. Task 6 inserts
