@@ -23,6 +23,18 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
   the PR body.
 - Never relax tsconfig strict flags. Sanctioned staging lives ONLY in
   `.quality-kit.json` `pendingFlags`.
+- Never edit `oxlint.config.ts` / `ruff.toml` to silence a rule. The only
+  sanctioned outlet is `.quality-kit.json` `ruleOverrides`, edited in the same
+  PR as the code it covers:
+  - `burnDown` (`rule → count`) — a temporary, counted allowance. CI re-counts
+    every run: the number may only shrink, and when it reaches zero the entry
+    must be removed. Growing it needs a justification in the PR body.
+  - `permanent` (`rule → {level, why}`) — a rule that genuinely never fits this
+    repo. `level` is `off` or `warn` (python: `off` only — ruff has no warn
+    severity). `why` is required and must say what makes the rule wrong here,
+    not that it was inconvenient.
+  - `ignoreOverrides` — repo-specific ignore globs (generated dirs, vendored
+    code), appended to the fleet preset's patterns.
 - Never delete or skip tests to get green.
 - Evidence before claiming progress: paste the tail of the passing validate
   output. If a check doesn't exist yet, say that plainly — don't fake it.
