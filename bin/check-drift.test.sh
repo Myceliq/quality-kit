@@ -158,6 +158,11 @@ R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['burnDown']={'x/y':'many'}"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*positive" && ok "non-int burnDown count rejected" || bad "non-int burnDown count rejected" "$out"
 
+# bool is an int subclass in python — {"rule": true} must not sail through as count 1
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['burnDown']={'x/y':True}"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*positive" && ok "bool burnDown count rejected" || bad "bool burnDown count rejected (bool must not pass as count 1)" "$out"
+
 R="$(fresh)"; qk_mut "$R" "d['ignoreOverrides']=[{'glob':'x'}]"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*ignoreOverrides" && ok "non-string ignoreOverrides rejected" || bad "non-string ignoreOverrides rejected" "$out"
@@ -166,9 +171,26 @@ R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']='nope'"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*ruleOverrides" && ok "malformed ruleOverrides rejected" || bad "malformed ruleOverrides rejected" "$out"
 
+# burnDown/permanent must each be an object, or the per-rule loops below would
+# AttributeError on .items() instead of naming a remedy
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']={'burnDown':'oops','permanent':{}}"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*must both be objects" && ok "non-object burnDown container rejected" || bad "non-object burnDown container rejected (would crash instead of naming a remedy)" "$out"
+
+# a permanent[rule] entry that isn't an object would crash spec.get(...) below
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'x/y':'off'}"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*must be an object with level and why" && ok "non-object permanent entry rejected" || bad "non-object permanent entry rejected (would crash instead of naming a remedy)" "$out"
+
 # a well-formed override set is clean
 R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'import/no-default-export':{'level':'off','why':'Next.js pages require default exports'}}; d['ignoreOverrides']=['src/generated/**']"
 run "$R" >/dev/null && ok "valid overrides stay clean" || bad "valid overrides stay clean" "$(run "$R" || true)"
+
+# warn IS renderable on a ts profile (oxlint has a warn severity) — only the
+# python profile (ruff, no warn severity) must reject it; prove the positive
+# direction, not just the python-side rejection below
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'some/rule':{'level':'warn','why':'staged rollout'}}"
+run "$R" >/dev/null && ok "warn level stays clean on ts profile" || bad "warn level stays clean on ts profile" "$(run "$R" || true)"
 
 # python profile: warn is unrenderable in ruff, so it must be rejected there
 python3 -c "
