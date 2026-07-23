@@ -210,4 +210,45 @@ out="$(run "$PYR" || true)"
 echo "$out" | grep -q "DRIFT.*ruff.toml" && ok "hand-edited ruff.toml caught" || bad "hand-edited ruff.toml caught" "$out"
 bash "$DIR/render-ruff.sh" "$PYR" > "$PYR/ruff.toml"
 
+# --- ratchet mode ---
+ratchet() { KIT_DIR="$KITROOT" bash "$CD" "$1" --ratchet 2>&1; }
+
+# default mode must stay toolchain-free and ignore burn-down counts entirely
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['burnDown']={'func-style':999}"
+run "$R" >/dev/null && ok "default mode ignores burn-down counts" || bad "default mode ignores burn-down counts" "$(run "$R" || true)"
+
+# unknown flag is a usage error, not a silent pass
+rc=0; KIT_DIR="$KITROOT" bash "$CD" "$R" --bogus >/dev/null 2>&1 || rc=$?
+[ "$rc" = 64 ] && ok "unknown flag is a usage error" || bad "unknown flag is a usage error" "rc=$rc"
+
+# python ratchet against real ruff: 3 unused imports recorded as 2 must fail
+if command -v uvx >/dev/null 2>&1; then
+  Q="$(mktemp -d)"; (cd "$Q" && git init -q && git config core.hooksPath /dev/null \
+    && git -c user.name=ci -c user.email=ci@example.com commit -q --allow-empty -m init)
+  bash "$DIR/stamp.sh" "$Q" --profile python >/dev/null 2>&1
+  printf 'import sys\nimport os\n\nx = 1\n' > "$Q/a.py"
+  printf 'import json\n\ny = 2\n' > "$Q/b.py"
+
+  qk_mut "$Q" "d['ruleOverrides']['burnDown']={'F401':2}"
+  bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
+  out="$(ratchet "$Q" || true)"
+  echo "$out" | grep -q "DRIFT.*F401" && ok "grown count caught (python)" || bad "grown count caught (python)" "$out"
+
+  qk_mut "$Q" "d['ruleOverrides']['burnDown']={'F401':3}"
+  bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
+  ratchet "$Q" >/dev/null && ok "exact count passes (python)" || bad "exact count passes (python)" "$(ratchet "$Q" || true)"
+
+  qk_mut "$Q" "d['ruleOverrides']['burnDown']={'F401':5}"
+  bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
+  ratchet "$Q" >/dev/null && ok "count as ceiling passes (python)" || bad "count as ceiling passes (python)" "$(ratchet "$Q" || true)"
+
+  # burn-down complete → the entry must be removed, not left at a stale count
+  qk_mut "$Q" "d['ruleOverrides']['burnDown']={'B008':4}"
+  bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
+  out="$(ratchet "$Q" || true)"
+  echo "$out" | grep -q "DRIFT.*B008.*remove" && ok "completed burn-down demands removal (python)" || bad "completed burn-down demands removal (python)" "$out"
+else
+  echo "SKIP python ratchet (no uvx available)"
+fi
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

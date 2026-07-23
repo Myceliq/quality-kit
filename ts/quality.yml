@@ -51,5 +51,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Drift ratchet (burn-down counts)
+        run: KIT_DIR="$PWD/.quality-kit-src/quality-kit" bash .quality-kit-src/quality-kit/bin/check-drift.sh . --ratchet
+
       - name: Validate
         run: npm run validate

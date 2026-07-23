@@ -4,7 +4,13 @@
 # Why:  local edits stay free; merge is where weakening gets caught. Every
 #       failure names its remedy so a repair-loop agent can self-correct.
 set -euo pipefail
-REPO="$(cd "${1:-.}" && pwd)"
+RATCHET=0 TARGET="."
+while [ $# -gt 0 ]; do case "$1" in
+  --ratchet) RATCHET=1; shift ;;
+  -*)        echo "unknown flag $1 (usage: check-drift.sh <repo> [--ratchet])" >&2; exit 64 ;;
+  *)         TARGET="$1"; shift ;;
+esac; done
+REPO="$(cd "$TARGET" && pwd)"
 KIT="${KIT_DIR:?set KIT_DIR to the kit checkout}"
 fail=0
 err() { echo "DRIFT: $*" >&2; fail=1; }
@@ -203,6 +209,55 @@ except Exception as e:
     sys.exit(1)
 sys.exit(rc)
 PY
+
+if [ "$RATCHET" = 1 ]; then
+  # The counting pass. Needs the repo's linter, so quality.yml runs it after
+  # Install while the static gate above runs before it (cheap-first).
+  BURN="$(python3 -c "
+import json,sys
+print(json.dumps((json.load(open(sys.argv[1])).get('ruleOverrides') or {}).get('burnDown') or {}))" "$QK")"
+  if [ "$BURN" != "{}" ]; then
+    # Toolchain check FIRST and loudly. baseline-rules.sh returns {} when the
+    # linter is missing, which is indistinguishable from "zero violations" — and
+    # zero would make every entry report "burn-down complete, remove it". A
+    # missing toolchain must fail the gate, never quietly rewrite the burn-down.
+    TOOLING_OK=1
+    if [ "$PROFILE" = python ]; then
+      command -v ruff >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1 || TOOLING_OK=0
+      [ "$TOOLING_OK" = 1 ] || err "ratchet needs ruff on PATH to count burn-down violations — install ruff in the CI job before this step"
+    else
+      [ -x "$REPO/node_modules/.bin/oxlint" ] || TOOLING_OK=0
+      [ "$TOOLING_OK" = 1 ] || err "ratchet needs the repo's node_modules — run it after the Install step"
+    fi
+    if [ "$TOOLING_OK" = 1 ]; then
+      # Counting and rule-id normalization live in baseline-rules.sh — the same
+      # code that seeded these numbers must be the code that re-counts them, or
+      # the two can disagree about what a rule is called and the ratchet silently
+      # compares nothing. --select re-enables the rules the python profile
+      # extend-ignore's; it is a no-op on TS, where they sit at warn already.
+      SEL="$(python3 -c "
+import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
+      # assign-then-fallback: baseline-rules.sh prints {} to stdout AND exits
+      # non-zero on a linter failure. `$(cmd || echo '{}')` would capture BOTH
+      # {}s (the printed one plus echo's) into "{}\n{}", which is invalid JSON.
+      ACTUAL="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL" 2>/dev/null)" || ACTUAL='{}'
+      python3 - "$BURN" "$ACTUAL" <<'PY' || fail=1
+import json, sys
+burn, actual = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+rc = 0
+for rule, allowed in sorted(burn.items()):
+    got = actual.get(rule, 0)
+    if got > allowed:
+        rc = 1
+        print(f"DRIFT: burn-down regressed: {rule} {got} > recorded {allowed} — fix the new violations, or bump the count in .quality-kit.json in this PR with justification", file=sys.stderr)
+    elif got == 0:
+        rc = 1
+        print(f"DRIFT: burn-down complete for {rule} — remove the entry from .quality-kit.json ruleOverrides.burnDown", file=sys.stderr)
+sys.exit(rc)
+PY
+    fi
+  fi
+fi
 
 [ "$fail" = 0 ] && { echo "drift gate clean (kit $KITV, profile $PROFILE)"; exit 0; }
 exit 1
