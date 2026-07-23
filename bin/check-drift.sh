@@ -26,7 +26,13 @@ same hooks/codex-hooks.json          .codex/hooks.json
 # byte-owned marker isn't still sitting there from the real stamp.
 if [ "$PROFILE" = python ]; then
   [ -f "$REPO/.github/workflows/quality.yml" ] && err "profile=python but .github/workflows/quality.yml (ts-profile artifact) is present — profile field does not match the repo's actual stamped file set"
-  same py/ruff.toml ruff.toml
+  # ruff.toml is rendered, not copied — compare against a fresh render of this
+  # repo's own declared overrides, so a hand-edited rule list is still caught.
+  RENDERED="$(mktemp)"
+  bash "$KIT/bin/render-ruff.sh" "$REPO" > "$RENDERED"
+  cmp -s "$RENDERED" "$REPO/ruff.toml" \
+    || err "ruff.toml does not match a fresh render of .quality-kit.json — re-stamp, or revert the hand edit; rule overrides belong in .quality-kit.json"
+  rm -f "$RENDERED"
   same py/pyrightconfig.json pyrightconfig.json
   same py/Makefile.quality Makefile.quality
   grep -q '^include Makefile.quality$' "$REPO/Makefile" 2>/dev/null \

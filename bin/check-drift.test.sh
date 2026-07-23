@@ -203,4 +203,11 @@ python3 -c "
 import json; p='$PYR/.quality-kit.json'; d=json.load(open(p))
 d['ruleOverrides']={'burnDown':{},'permanent':{}}; json.dump(d,open(p,'w'))"
 
+# a hand-edited rendered ruff.toml must be caught (the rendered file is as
+# byte-owned as a copied one — the declaration site is .quality-kit.json)
+printf '\nextend-ignore = ["F401"]\n' >> "$PYR/ruff.toml"
+out="$(run "$PYR" || true)"
+echo "$out" | grep -q "DRIFT.*ruff.toml" && ok "hand-edited ruff.toml caught" || bad "hand-edited ruff.toml caught" "$out"
+bash "$DIR/render-ruff.sh" "$PYR" > "$PYR/ruff.toml"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

@@ -42,7 +42,8 @@ put hooks/codex-hooks.json          644 .codex/hooks.json
 RUNNER=npm
 if [ "$PROFILE" = python ]; then
   RUNNER=make
-  put py/ruff.toml         644 ruff.toml
+  # ruff.toml is rendered (not copied) once .quality-kit.json exists — see below
+  STAMPED+=(ruff.toml)
   put py/pyrightconfig.json 644 pyrightconfig.json
   put py/Makefile.quality  644 Makefile.quality
   touch "$REPO/Makefile"
@@ -127,6 +128,17 @@ else:
     am = (am.rstrip() + "\n\n" if am.strip() else "") + qm
 open(am_path, "w").write(am if am.endswith("\n") else am + "\n")
 PY
+
+# ruff.toml is a rendered file: kit base + this repo's declared overrides.
+# ORDERING: this must be the LAST thing that touches .quality-kit.json's
+# override keys before the manifest is hashed — it reads them. Task 6 inserts
+# burn-down seeding ABOVE this block for exactly that reason; a render that ran
+# first would omit the freshly seeded rules, leaving the repo red on day one and
+# permanently mismatched against a fresh render in the drift gate.
+if [ "$PROFILE" = python ]; then
+  bash "$KIT/bin/render-ruff.sh" "$REPO" > "$REPO/ruff.toml"
+  chmod 644 "$REPO/ruff.toml"
+fi
 
 # suppression baseline: initialize from current repo state on first stamp only
 # (a re-stamp must not silently absorb suppressions added since — that is the
