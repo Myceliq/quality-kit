@@ -26,7 +26,9 @@ Spec: `docs/specs/2026-07-17-quality-platform-design.md`.
   first stamp by `bin/baseline-rules.sh`. Applied at `warn` on TS profiles
   (visible, non-blocking); `extend-ignore`d on python, since ruff has no warn
   severity. `check-drift.sh --ratchet` re-counts every CI run: counts may only
-  shrink, and an entry that reaches zero must be removed.
+  shrink, and an entry that reaches zero must be removed. A count can be
+  raised — a justified, diff-visible bump in `.quality-kit.json` — if new
+  violations are genuinely unavoidable.
 - `ruleOverrides.permanent` — `rule → {level, why}`, never generated. `level` is
   `off` or `warn` (python: `off` only). A non-empty `why` is enforced.
 - `ignoreOverrides` — repo-specific ignore globs appended to the fleet preset's.
@@ -48,7 +50,8 @@ re-stamp byte-exact.
 - **Fail-closed on unknown rule keys.** The static check validates shape, not
   whether a rule id exists. A typo'd or removed-in-upgrade rule in `burnDown` /
   `permanent` is a hard oxlint config-parse error (`Rule '...' not found`,
-  exit 1) at lint time — not a silent no-op.
+  exit 1) at lint time — not a silent no-op. (Verified for oxlint/TS profiles;
+  a typo'd ruff code may behave differently — not verified.)
 
 ## Stamping a repo — known gotchas
 
