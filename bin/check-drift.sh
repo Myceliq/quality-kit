@@ -217,7 +217,12 @@ if [ "$RATCHET" = 1 ]; then
 import json,sys
 ov = json.load(open(sys.argv[1])).get('ruleOverrides') or {}
 ov = ov if isinstance(ov, dict) else {}
-print(json.dumps(ov.get('burnDown') or {}))" "$QK")"
+bd = ov.get('burnDown')
+# Coerce a malformed (non-dict) burnDown to {} so the ratchet is a no-op on it:
+# check_overrides above already reports the shape error with its remedy, and a
+# non-dict here would otherwise build a garbage --select and surface a
+# misleading 'linter failed' DRIFT on top of the correct one.
+print(json.dumps(bd if isinstance(bd, dict) else {}))" "$QK")"
   if [ "$BURN" != "{}" ]; then
     # Toolchain check FIRST and loudly. baseline-rules.sh returns {} when the
     # linter is missing, which is indistinguishable from "zero violations" — and

@@ -274,6 +274,18 @@ if command -v uvx >/dev/null 2>&1; then
   out="$(ratchet "$Q" || true)"
   echo "$out" | grep -q "DRIFT.*ruleOverrides" && ok "malformed ruleOverrides caught under --ratchet" || bad "malformed ruleOverrides caught under --ratchet" "$out"
   echo "$out" | grep -q "Traceback" && bad "malformed ruleOverrides under --ratchet must not traceback" "$out" || ok "malformed ruleOverrides under --ratchet does not traceback"
+
+  # FIX (CodeRabbit follow-up): a malformed NESTED burnDown (non-dict) must also
+  # be coerced — otherwise it builds a garbage --select and surfaces a
+  # misleading 'linter failed' DRIFT on top of the correct schema DRIFT. The
+  # ratchet coerces a non-dict burnDown to {} so it's a clean no-op; the static
+  # check_overrides names the real remedy.
+  qk_mut "$Q" "d['ruleOverrides']={'burnDown':'nope','permanent':{}}"
+  bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
+  out="$(ratchet "$Q" || true)"
+  echo "$out" | grep -q "DRIFT.*burnDown.*both be objects" && ok "malformed nested burnDown caught under --ratchet" || bad "malformed nested burnDown caught under --ratchet" "$out"
+  echo "$out" | grep -q "Traceback" && bad "malformed nested burnDown under --ratchet must not traceback" "$out" || ok "malformed nested burnDown under --ratchet does not traceback"
+  echo "$out" | grep -q "linter failed to run" && bad "malformed nested burnDown must not surface a misleading linter-failed DRIFT" "$out" || ok "malformed nested burnDown gives no misleading linter-failed message"
 else
   echo "SKIP python ratchet (no uvx available)"
 fi
