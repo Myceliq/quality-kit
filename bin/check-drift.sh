@@ -215,7 +215,9 @@ if [ "$RATCHET" = 1 ]; then
   # Install while the static gate above runs before it (cheap-first).
   BURN="$(python3 -c "
 import json,sys
-print(json.dumps((json.load(open(sys.argv[1])).get('ruleOverrides') or {}).get('burnDown') or {}))" "$QK")"
+ov = json.load(open(sys.argv[1])).get('ruleOverrides') or {}
+ov = ov if isinstance(ov, dict) else {}
+print(json.dumps(ov.get('burnDown') or {}))" "$QK")"
   if [ "$BURN" != "{}" ]; then
     # Toolchain check FIRST and loudly. baseline-rules.sh returns {} when the
     # linter is missing, which is indistinguishable from "zero violations" — and

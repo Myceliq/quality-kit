@@ -263,6 +263,17 @@ if command -v uvx >/dev/null 2>&1; then
   # this checks the specific broken phrasing, not a bare substring.
   echo "$out" | grep -q "burn-down complete for" && bad "crash must not read as burn-down complete" "$out" || ok "crash not read as burn-down complete"
   echo "$out" | grep -q "remove the entry" && bad "crash must not demand removing the ledger entry" "$out" || ok "crash does not demand removing the entry"
+
+  # FIX (CodeRabbit): malformed ruleOverrides (a string, not a dict) must not
+  # traceback under --ratchet either — the ratchet's own BURN extraction now
+  # coerces a non-dict ruleOverrides to {}, same as render-ruff.sh already
+  # does; check_overrides() in the static pass is still what names the DRIFT
+  # remedy. This locks the fix for the ratchet's own read of ruleOverrides.
+  bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
+  qk_mut "$Q" "d['ruleOverrides']='nope'"
+  out="$(ratchet "$Q" || true)"
+  echo "$out" | grep -q "DRIFT.*ruleOverrides" && ok "malformed ruleOverrides caught under --ratchet" || bad "malformed ruleOverrides caught under --ratchet" "$out"
+  echo "$out" | grep -q "Traceback" && bad "malformed ruleOverrides under --ratchet must not traceback" "$out" || ok "malformed ruleOverrides under --ratchet does not traceback"
 else
   echo "SKIP python ratchet (no uvx available)"
 fi

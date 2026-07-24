@@ -35,6 +35,7 @@ while [ $# -gt 0 ]; do case "$1" in
 esac; done
 [ -n "$REPO" ] || { echo "usage: baseline-rules.sh <repo> [--select a,b]" >&2; exit 64; }
 REPO="$(cd "$REPO" && pwd)"
+[ -f "$REPO/.quality-kit.json" ] || { echo "baseline-rules.sh: $REPO/.quality-kit.json not found — stamp the repo first (quality-kit/bin/stamp.sh $REPO --profile <profile>)" >&2; exit 64; }
 PROFILE="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('profile',''))" "$REPO/.quality-kit.json")"
 
 # A baseline seeded from a dirty tree is not reproducible. CI lints a clean
