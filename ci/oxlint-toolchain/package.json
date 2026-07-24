@@ -1,0 +1,10 @@
+{
+  "name": "quality-kit-oxlint-toolchain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned oxlint+ultracite toolchain for quality-kit CI's config integration test (quality-kit/ts/oxlint-overrides.test.sh). Regenerate the lockfile when quality-kit/ts/pins.json bumps oxlint/ultracite.",
+  "dependencies": {
+    "oxlint": "1.74.0",
+    "ultracite": "7.9.4"
+  }
+}
