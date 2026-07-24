@@ -14,7 +14,13 @@ kit, repo = sys.argv[1:3]
 base = open(os.path.join(kit, "py/ruff.toml")).read().rstrip("\n").split("\n")
 qk_path = os.path.join(repo, ".quality-kit.json")
 qk = json.load(open(qk_path)) if os.path.exists(qk_path) else {}
-ov = qk.get("ruleOverrides") or {}
+# a malformed ruleOverrides (e.g. a string or list, not an object) must not
+# traceback here — check-drift.sh runs this render BEFORE its own schema
+# check can name the real remedy, so a crash here would surface as a raw
+# traceback instead of a clean DRIFT message. Degrade to the base render;
+# check_overrides() in check-drift.sh is still the authoritative shape gate.
+ov = qk.get("ruleOverrides")
+ov = ov if isinstance(ov, dict) else {}
 # both kinds are rendered the same way: ruff has no warn severity, so burn-down
 # rules are ignored-until-fixed and the drift ratchet re-selects them to count.
 rules = sorted(set(ov.get("burnDown") or {}) | set(ov.get("permanent") or {}))

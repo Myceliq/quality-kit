@@ -147,7 +147,10 @@ if [ "$FIRST_BURNDOWN" = 1 ]; then
   # exit (missing/crashed linter); `cmd || echo` would append a second "{}"
   # onto that captured output instead of replacing it. Assign-then-fallback
   # keeps the failure path a clean "{}" instead of corrupt concatenated JSON.
-  BURN="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" 2>/dev/null)" || BURN='{}'
+  # The rc is captured separately so the toolchain-present-but-zero-violations
+  # case (exit 0, "{}") isn't misreported as "toolchain absent".
+  BR_RC=0
+  BURN="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" 2>/dev/null)" || BR_RC=$?
   if [ "$BURN" != "{}" ]; then
     python3 - "$REPO/.quality-kit.json" "$BURN" <<'PY'
 import json, sys
@@ -157,8 +160,10 @@ d["ruleOverrides"]["burnDown"] = burn
 open(path, "w").write(json.dumps(d, indent=2) + "\n")
 PY
     echo "→ seeded ruleOverrides.burnDown with $(python3 -c "import json,sys;print(len(json.loads(sys.argv[1])))" "$BURN") rules from a lint run"
+  elif [ "$BR_RC" = 0 ]; then
+    echo "→ no burn-down needed — the linter reported zero violations"
   else
-    echo "→ toolchain absent — after install, seed the burn-down: quality-kit/bin/baseline-rules.sh $REPO"
+    echo "→ toolchain not ready (baseline-rules.sh exit $BR_RC) — after install, seed the burn-down: quality-kit/bin/baseline-rules.sh $REPO"
   fi
 fi
 

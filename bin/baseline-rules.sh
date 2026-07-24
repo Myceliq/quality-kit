@@ -69,7 +69,9 @@ if [ "$PROFILE" = python ]; then
   fi
   # a CLI --select overrides a config-file extend-ignore (verified, ruff 0.15.22)
   set +e
-  RAW="$(cd "$REPO" && $RUFF check ${SELECT:+--select "$SELECT"} --exit-zero --output-format json . 2>/dev/null)"
+  ERRF="$(mktemp)"
+  trap 'rm -f "$ERRF"' EXIT
+  RAW="$(cd "$REPO" && $RUFF check ${SELECT:+--select "$SELECT"} --exit-zero --output-format json . 2>"$ERRF")"
   RUFF_RC=$?
   set -e
   # --exit-zero means a genuinely successful ruff run (violations or not)
@@ -79,10 +81,13 @@ if [ "$PROFILE" = python ]; then
   # rc AND the output shape (a JSON list) both gate success; exit 4 signals
   # "ran but failed", distinct from exit 3 ("not installed"). Piped via
   # stdin, not argv: a real repo's lint output can be well past ARG_MAX, and
-  # execve() rejects an over-long argument list outright.
+  # execve() rejects an over-long argument list outright. stderr is captured
+  # to a separate file (not merged into RAW) so stdout stays pure JSON — on
+  # failure its contents are what actually tell the operator why ruff crashed.
   python3 -c "
 import collections, json, sys
 rc = int(sys.argv[1])
+errf = sys.argv[2]
 raw = sys.stdin.read()
 diags = None
 if rc == 0:
@@ -95,10 +100,11 @@ if rc == 0:
 if diags is None:
     print('{}')
     print(f'baseline-rules.sh: ruff check failed to produce a valid rule list (exit {rc}) — not seeding a baseline; fix the failure, then run: quality-kit/bin/baseline-rules.sh $REPO', file=sys.stderr)
-    print(raw[-2000:], file=sys.stderr)
+    err = open(errf).read().strip()
+    print(err[-2000:] if err else raw[-2000:], file=sys.stderr)
     sys.exit(4)
 c = collections.Counter(x['code'] for x in diags if x.get('code'))
-print(json.dumps(dict(sorted(c.items()))))" "$RUFF_RC" <<<"$RAW"
+print(json.dumps(dict(sorted(c.items()))))" "$RUFF_RC" "$ERRF" <<<"$RAW"
   exit 0
 fi
 

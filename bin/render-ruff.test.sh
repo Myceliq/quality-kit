@@ -44,6 +44,15 @@ assert '\"UP006\"' in t, 'permanent rules must be ignored too'
 assert '\"src/generated/**\", \"vendor/**\"' in t, ('ignoreOverrides must be sorted', t)
 " && ok "sections spliced correctly, sorted" || bad "sections spliced correctly, sorted" "$(cat "$R/out.toml")"
 
+# malformed ruleOverrides (non-dict, e.g. a bare string) must not traceback —
+# render-ruff.sh degrades to the base render; check-drift.sh's own schema
+# check (check_overrides) is the authoritative place that names the remedy
+# for the malformed shape, so this only needs to not crash.
+R="$(mk '{"version":"0.2.0","profile":"python","runner":"make","pendingFlags":[],"ruleOverrides":"nope","ignoreOverrides":[]}')"
+rc=0; bash "$RR" "$R" > "$R/out.toml" 2>"$R/err.txt" || rc=$?
+[ "$rc" = 0 ] && ok "malformed ruleOverrides exits 0, no traceback" || bad "malformed ruleOverrides exits 0, no traceback" "rc=$rc $(cat "$R/err.txt")"
+cmp -s "$KITROOT/py/ruff.toml" "$R/out.toml" && ok "malformed ruleOverrides degrades to the base render" || bad "malformed ruleOverrides degrades to the base render" "$(diff "$KITROOT/py/ruff.toml" "$R/out.toml" || true)"
+
 # the rendered file must be valid TOML that ruff itself accepts
 if command -v uvx >/dev/null 2>&1; then
   cp "$R/out.toml" "$R/ruff.toml"; printf 'import os\n' > "$R/probe.py"

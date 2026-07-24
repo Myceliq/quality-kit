@@ -247,6 +247,22 @@ if command -v uvx >/dev/null 2>&1; then
   bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
   out="$(ratchet "$Q" || true)"
   echo "$out" | grep -q "DRIFT.*B008.*remove" && ok "completed burn-down demands removal (python)" || bad "completed burn-down demands removal (python)" "$out"
+
+  # A1 (the merge blocker): a linter CRASH mid-run (malformed ruff.toml, same
+  # config-parse failure baseline-rules.test.sh already proves exits 4) must
+  # NOT be read as "{} == all burn-down complete" — that reading would tell an
+  # automated repair-loop to delete the whole ledger over a transient crash.
+  qk_mut "$Q" "d['ruleOverrides']['burnDown']={'F401':3}"
+  printf 'this is not valid toml [[[\n' > "$Q/ruff.toml"
+  out="$(ratchet "$Q" || true)"
+  echo "$out" | grep -q "DRIFT.*linter failed to run" && ok "linter crash reported, not silently absorbed (python)" || bad "linter crash reported, not silently absorbed (python)" "$out"
+  # the erroneous per-rule "complete, remove it" remedy (what a crash
+  # misread as zero violations would have produced for every burn-down rule)
+  # must not appear — note the fix's OWN message legitimately contains the
+  # bare word "complete" ("must not be read as 'all burn-down complete'"), so
+  # this checks the specific broken phrasing, not a bare substring.
+  echo "$out" | grep -q "burn-down complete for" && bad "crash must not read as burn-down complete" "$out" || ok "crash not read as burn-down complete"
+  echo "$out" | grep -q "remove the entry" && bad "crash must not demand removing the ledger entry" "$out" || ok "crash does not demand removing the entry"
 else
   echo "SKIP python ratchet (no uvx available)"
 fi

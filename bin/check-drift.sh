@@ -237,11 +237,17 @@ print(json.dumps((json.load(open(sys.argv[1])).get('ruleOverrides') or {}).get('
       # extend-ignore's; it is a no-op on TS, where they sit at warn already.
       SEL="$(python3 -c "
 import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
-      # assign-then-fallback: baseline-rules.sh prints {} to stdout AND exits
-      # non-zero on a linter failure. `$(cmd || echo '{}')` would capture BOTH
-      # {}s (the printed one plus echo's) into "{}\n{}", which is invalid JSON.
-      ACTUAL="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL" 2>/dev/null)" || ACTUAL='{}'
-      python3 - "$BURN" "$ACTUAL" <<'PY' || fail=1
+      # capture the rc without letting set -e abort on it: baseline-rules.sh
+      # exits non-zero (3 not installed, 4 crashed) and prints {} to stdout in
+      # both cases. A crash must not be read as "{}" == "all burn-down
+      # complete" — that would tell an automated repair-loop to delete the
+      # entire ledger over a transient linter crash.
+      BR_RC=0
+      ACTUAL="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL" 2>/dev/null)" || BR_RC=$?
+      if [ "$BR_RC" != 0 ]; then
+        err "ratchet: the linter failed to run (baseline-rules.sh exit $BR_RC) — fix the linter/config and re-run; a crashed lint run must not be read as 'all burn-down complete'"
+      else
+        python3 - "$BURN" "$ACTUAL" <<'PY' || fail=1
 import json, sys
 burn, actual = json.loads(sys.argv[1]), json.loads(sys.argv[2])
 rc = 0
@@ -255,6 +261,7 @@ for rule, allowed in sorted(burn.items()):
         print(f"DRIFT: burn-down complete for {rule} — remove the entry from .quality-kit.json ruleOverrides.burnDown", file=sys.stderr)
 sys.exit(rc)
 PY
+      fi
     fi
   fi
 fi
