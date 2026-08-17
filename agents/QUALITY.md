@@ -40,6 +40,14 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
   - `ignoreOverrides` — repo-specific ignore globs (generated dirs, vendored
     code), appended to the fleet preset's patterns.
 - Never delete or skip tests to get green.
+- LoC budget (repos whose `.quality-kit.json` carries `locBudget`):
+  `bin/loc-budget.sh` fails the gate when counted source lines exceed
+  `locBudget.budget` over `locBudget.paths`. It counts SLOC language-aware —
+  blank lines, comments and Python docstrings are free, so documentation never
+  competes with logic. The cap is pressure on logic, not a number to move:
+  respond by refactoring and deleting. Raising `locBudget.budget` is a
+  diff-visible bump in the same PR, argued for in the PR body — the same
+  sanctioned staging as `burnDown` counts.
 - Evidence before claiming progress: paste the tail of the passing validate
   output. If a check doesn't exist yet, say that plainly — don't fake it.
 <!-- quality-kit:end -->
