@@ -15,7 +15,8 @@ Spec: `docs/specs/2026-07-17-quality-platform-design.md`.
         "burnDown":  { "func-style": 143 },
         "permanent": { "import/no-default-export": { "level": "off", "why": "Next.js pages require default exports" } }
       },
-      "ignoreOverrides": ["src/generated/**"]
+      "ignoreOverrides": ["src/generated/**"],
+      "locBudget": { "budget": 5000, "paths": ["src/**", "scripts/*.sh"] }
     }
 
 - `version` — kit pin; CI checks out tag `quality-kit-v<version>`.
@@ -32,6 +33,14 @@ Spec: `docs/specs/2026-07-17-quality-platform-design.md`.
 - `ruleOverrides.permanent` — `rule → {level, why}`, never generated. `level` is
   `off` or `warn` (python: `off` only). A non-empty `why` is enforced.
 - `ignoreOverrides` — repo-specific ignore globs appended to the fleet preset's.
+- `locBudget` — optional. `bin/loc-budget.sh <repo>` fails when tracked source
+  under `paths` (git pathspecs) exceeds `budget`, counting language-aware SLOC
+  (blank lines, comments, and Python docstrings are free). `LOC_PATHS` /
+  `LOC_BUDGET` env vars override this block; the block is the repo-committed
+  default. Neither source configured is a loud refusal, not a
+  default-everything sweep — sweeping the whole tree would silently count
+  vendored/generated code. Not wired into stamped CI in v1; run it as an
+  explicit CI step or locally.
 
 Rule ids use **config form**, not diagnostic form: core eslint rules are bare
 (`func-style`), everything else is `plugin/rule` (`unicorn/filename-case`).
