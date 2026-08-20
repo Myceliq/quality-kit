@@ -9,13 +9,13 @@ import react from "ultracite/oxlint/react";
 // here so this file stays byte-identical across the fleet (the drift gate
 // compares it byte-for-byte). Resolved against import.meta.url — i.e. relative
 // to this config, not the cwd — so oxlint run from a subdirectory still finds it.
-type QualityKit = {
+interface QualityKit {
   ruleOverrides?: {
     burnDown?: Record<string, number>;
     permanent?: Record<string, { level: "off" | "warn"; why: string }>;
   };
   ignoreOverrides?: string[];
-};
+}
 // In a stamped repo .quality-kit.json is a guaranteed sibling (the drift gate
 // hard-fails without it); when it is absent (unstamped or partial-stamp context)
 // fall back to no overrides so fleet rules still apply — stricter, never weaker.
@@ -23,10 +23,12 @@ type QualityKit = {
 let qk: QualityKit = {};
 try {
   qk = JSON.parse(
-    readFileSync(new URL(".quality-kit.json", import.meta.url), "utf8")
+    readFileSync(new URL(".quality-kit.json", import.meta.url), "utf-8")
   ) as QualityKit;
-} catch (e) {
-  if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+} catch (error) {
+  if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+    throw error;
+  }
 }
 // burn-down stays at `warn`: switching it off would hide the very violations
 // the drift ratchet has to count.
