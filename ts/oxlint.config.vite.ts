@@ -1,8 +1,9 @@
+import { readFileSync } from "node:fs";
+
 // quality-kit stamped file — do not edit in the repo; change the kit instead.
 import { defineConfig } from "oxlint";
 import core from "ultracite/oxlint/core";
 import react from "ultracite/oxlint/react";
-import { readFileSync } from "node:fs";
 
 // Repo-specific overrides, declared once in .quality-kit.json and self-applied
 // here so this file stays byte-identical across the fleet (the drift gate
@@ -22,7 +23,7 @@ type QualityKit = {
 let qk: QualityKit = {};
 try {
   qk = JSON.parse(
-    readFileSync(new URL(".quality-kit.json", import.meta.url), "utf8"),
+    readFileSync(new URL(".quality-kit.json", import.meta.url), "utf8")
   ) as QualityKit;
 } catch (e) {
   if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
@@ -30,10 +31,13 @@ try {
 // burn-down stays at `warn`: switching it off would hide the very violations
 // the drift ratchet has to count.
 const burnDown = Object.fromEntries(
-  Object.keys(qk.ruleOverrides?.burnDown ?? {}).map((r) => [r, "warn"]),
+  Object.keys(qk.ruleOverrides?.burnDown ?? {}).map((r) => [r, "warn"])
 );
 const permanent = Object.fromEntries(
-  Object.entries(qk.ruleOverrides?.permanent ?? {}).map(([r, v]) => [r, v.level]),
+  Object.entries(qk.ruleOverrides?.permanent ?? {}).map(([r, v]) => [
+    r,
+    v.level,
+  ])
 );
 
 export default defineConfig({

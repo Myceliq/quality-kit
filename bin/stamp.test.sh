@@ -31,7 +31,8 @@ done
 python3 -c "
 import json
 qk=json.load(open('$R/.quality-kit.json'))
-assert qk=={'version':'0.2.0','profile':'nextjs','runner':'npm','pendingFlags':[],
+kit_version=open('$DIR/../VERSION').read().strip()
+assert qk=={'version':kit_version,'profile':'nextjs','runner':'npm','pendingFlags':[],
             'ruleOverrides':{'burnDown':{},'permanent':{}},'ignoreOverrides':[]}, qk
 p=json.load(open('$R/package.json'))
 assert p['scripts']['dev']=='next dev', 'existing scripts preserved'
