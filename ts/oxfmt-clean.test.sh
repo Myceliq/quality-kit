@@ -16,7 +16,7 @@ bad() { echo "FAIL $1: $2"; fail=1; }
 
 # oxfmt.config.ts imports the "oxfmt" package, so it only resolves next to a
 # node_modules that has oxfmt installed. Point OXFMT_BIN at one; CI installs
-# the pinned toolchain and sets it. Unset (e.g. bare cockpit CI without the
+# the pinned toolchain and sets it. Unset (e.g. a consumer CI without the
 # toolchain step) skips cleanly rather than failing the suite.
 OXFMT="${OXFMT_BIN:-}"
 if [ -z "$OXFMT" ] || ! command -v node >/dev/null 2>&1; then

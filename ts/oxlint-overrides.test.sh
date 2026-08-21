@@ -13,7 +13,7 @@ bad() { echo "FAIL $1: $2"; fail=1; }
 # Needs a real oxlint whose node_modules ALSO has ultracite (the config imports
 # ultracite/oxlint/*). Point OXLINT_BIN at it — CI installs the pinned toolchain
 # and sets it; locally, set it to any stamped repo's node_modules/.bin/oxlint.
-# No machine-specific path here: unset OXLINT_BIN (e.g. bare cockpit CI without
+# No machine-specific path here: unset OXLINT_BIN (e.g. a consumer CI without
 # the toolchain step) skips cleanly rather than failing the suite.
 OXLINT="${OXLINT_BIN:-}"
 if [ -z "$OXLINT" ] || ! command -v node >/dev/null 2>&1; then

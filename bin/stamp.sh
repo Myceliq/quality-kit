@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # What: stamp (or update) the quality-kit standard into a target repo.
-# Where: quality-kit/bin; run from cockpit against any fleet repo.
+# Where: this kit's bin/; run from a checkout of it against any fleet repo.
 # Why:  one write path for the fleet standard — byte-owned files are copied,
 #       shared files (package.json, tsconfig, AGENTS.md, .claude/settings.json)
 #       are merged non-destructively; a manifest makes local edits detectable.
