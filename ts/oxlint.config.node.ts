@@ -45,6 +45,13 @@ export default defineConfig({
   extends: [core],
   ignorePatterns: [
     ...[core].flatMap((c) => c.ignorePatterns ?? []),
+    // The stamped CI workflow checks this kit out INTO the repo, at
+    // .quality-kit-src/, so the drift gate can run before install. Without
+    // this the repo lints the kit's own source as if it were repo code: the
+    // three oxlint configs each carry two type assertions, so every CI
+    // burn-down count came out six higher than any local run could
+    // reproduce, and a locally seeded baseline could never match CI.
+    ".quality-kit-src/**",
     ...(qk.ignoreOverrides ?? []),
   ],
   rules: {
