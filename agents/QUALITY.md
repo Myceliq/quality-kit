@@ -16,7 +16,7 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
 - Never edit stamped files (`.quality/`, `oxlint.config.ts`, `oxfmt.config.ts`,
   `tsconfig.quality.json`, `.github/workflows/quality.yml`, `.codex/hooks.json`;
   python profile: `ruff.toml`, `pyrightconfig.json`, `Makefile.quality`).
-  Change cockpit `quality-kit/` and re-stamp instead.
+  Change the kit at github.com/Myceliq/quality-kit and re-stamp instead.
 - Never add lint/type suppressions (`oxlint-disable`, `@ts-expect-error`,
   `@ts-ignore`, `noqa`, `type: ignore`) to get green. A genuinely needed one =
   bump `.quality/suppression-baseline.json` in the same PR and justify it in
@@ -40,14 +40,13 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
   - `ignoreOverrides` — repo-specific ignore globs (generated dirs, vendored
     code), appended to the fleet preset's patterns.
 - Never delete or skip tests to get green.
-- LoC budget (repos whose `.quality-kit.json` carries `locBudget`):
-  `bin/loc-budget.sh` fails the gate when counted source lines exceed
-  `locBudget.budget` over `locBudget.paths`. It counts SLOC language-aware —
-  blank lines, comments and Python docstrings are free, so documentation never
-  competes with logic. The cap is pressure on logic, not a number to move:
-  respond by refactoring and deleting. Raising `locBudget.budget` is a
-  diff-visible bump in the same PR, argued for in the PR body — the same
-  sanctioned staging as `burnDown` counts.
+- CHORE markers record out-of-footprint cleanup instead of doing it:
+  `CHORE(<what is wrong>): <the cheaper shape>`, in that file's own comment syntax. Only in
+  a file the change already touches — a marker in an untouched file widens the diff and
+  collides across parallel worktrees. CI counts them and prints the count; **it never fails
+  on the count**. A ratchet here would make adding a marker break the build, so agents would
+  stop marking and the signal would disappear. Findings that need a decision, are blocked on
+  someone, or span files are issues, not markers.
 - Evidence before claiming progress: paste the tail of the passing validate
   output. If a check doesn't exist yet, say that plainly — don't fake it.
 <!-- quality-kit:end -->

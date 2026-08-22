@@ -5,7 +5,16 @@ Fleet validation standard. Stamp it into a repo with
 `bin/check-drift.sh` against this kit at the repo's pinned version tag
 (`quality-kit-v<VERSION>`), then runs the repo's own `validate`.
 
-Spec: `docs/specs/2026-07-17-quality-platform-design.md`.
+This repo is **public** for one reason: a stamped repo's CI checks it out by
+tag, and a workflow's built-in `GITHUB_TOKEN` cannot check out a *private*
+repo other than its own. While the kit lived inside the private `cockpit`
+repo, every stamped repo needed its own hand-minted fine-grained PAT — manual
+browser work per repo, with no API to automate it, and that was the binding
+constraint on fleet-wide adoption. Public removes it. Nothing here is secret:
+it is lint configs, shell scripts and a stamper.
+
+Design spec lives in the private cockpit repo
+(`docs/specs/2026-07-17-quality-platform-design.md`).
 
 ## .quality-kit.json (written into each stamped repo)
 
@@ -110,6 +119,11 @@ stamp PR — most of them BLOCK a green stamp.
 
 Bump `VERSION`, merge to main, tag `quality-kit-v<VERSION>` on the merge
 commit, push the tag. Repos upgrade by re-running stamp.sh (new PR).
+
+**The tag is the release.** A version that is merged but never tagged looks
+shipped and is not: stamped repos resolve `quality-kit-v<version>` and their
+CI fails at checkout. This has already happened once (v0.3.0). Before telling
+anyone a version exists, confirm `git rev-list -n1 quality-kit-v<version>`.
 
 ## python-profile CI gap (v1)
 

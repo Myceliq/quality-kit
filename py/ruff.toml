@@ -3,5 +3,16 @@ line-length = 100
 target-version = "py312"
 
 [lint]
-# defaults (E4/E7/E9/F) + bugbear, import sort, py-upgrade
-extend-select = ["B", "I", "UP"]
+# defaults (E4/E7/E9/F) + bugbear, import sort, py-upgrade, flake8-bandit
+# "S" is the flake8-bandit port — it covers Bandit's core checks without a second tool in the
+# per-commit layer (cockpit#60). Standalone Bandit only earns a slot if a bake-off shows a delta.
+extend-select = ["B", "I", "UP", "S"]
+
+[lint.per-file-ignores]
+# `assert` IS the test and self-check idiom here (ponytail's one-runnable-check convention), so
+# S101 would fire on every test file. That is noise, not debt — it would drown the real findings
+# rather than feed the burn-down ledger. Scoped to tests only; asserts in shipped code still flag.
+"**/test_*.py" = ["S101"]
+"**/*_test.py" = ["S101"]
+"**/tests/**" = ["S101"]
+"**/conftest.py" = ["S101"]

@@ -1,7 +1,7 @@
 ##
 # quality-kit stamped workflow — do not edit in the repo; change the kit.
 # Drift gate first (cheap, unforgeable), then the exact same `validate`
-# command agents run locally. Spec: cockpit docs/specs/2026-07-17-*.md
+# command agents run locally. Spec: cockpit docs/specs/2026-07-17-*.md (private).
 ##
 name: Quality
 
@@ -27,21 +27,22 @@ jobs:
         id: kit
         run: echo "version=$(python3 -c "import json;print(json.load(open('.quality-kit.json'))['version'])")" >> "$GITHUB_OUTPUT"
 
-      # Fork-PR note: fork-originated pull_request runs receive no secrets, so
-      # this checkout — and with it the drift gate — fails CLOSED on fork PRs.
-      # Deliberate: fleet repos are single-operator private repos; PRs originate
-      # from same-repo branches, which do receive secrets. Do not add a fork
-      # skip — skipping the drift gate would fail OPEN.
+      # The kit is a PUBLIC repo, so this checkout needs no token — and it works
+      # on fork PRs, which receive no secrets. Until v0.4.0 it pointed at the
+      # private cockpit repo and every stamped repo needed its own hand-minted
+      # fine-grained PAT: a workflow's built-in GITHUB_TOKEN cannot check out a
+      # different private repo, and GitHub has no API for minting PATs. That
+      # per-repo manual step was the binding constraint on fleet-wide adoption.
+      # Making the kit public removed it outright — do not reintroduce a token.
       - name: Checkout quality-kit at pinned version
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          repository: thomaslestum/cockpit
+          repository: Myceliq/quality-kit
           ref: quality-kit-v${{ steps.kit.outputs.version }}
-          token: ${{ secrets.QUALITY_KIT_READ_TOKEN }}
           path: .quality-kit-src
 
       - name: Drift gate
-        run: KIT_DIR="$PWD/.quality-kit-src/quality-kit" bash .quality-kit-src/quality-kit/bin/check-drift.sh .
+        run: KIT_DIR="$PWD/.quality-kit-src" bash .quality-kit-src/bin/check-drift.sh .
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -52,7 +53,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Drift ratchet (burn-down counts)
-        run: KIT_DIR="$PWD/.quality-kit-src/quality-kit" bash .quality-kit-src/quality-kit/bin/check-drift.sh . --ratchet
+        run: KIT_DIR="$PWD/.quality-kit-src" bash .quality-kit-src/bin/check-drift.sh . --ratchet
 
       - name: Validate
         run: npm run validate
