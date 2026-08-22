@@ -46,19 +46,52 @@ JSON
   # not the ignore works. (Confirmed: an assertion-based probe passed against
   # deliberately unfixed configs.) If .quality-kit-src is scanned this is
   # reported; if it is ignored, nothing is.
-  printf 'const y = () => 2;\nexport function bad() { return y(); }\n' \
-    > "$W/.quality-kit-src/ts/probe.ts"
+  PROBE='const y = () => 2;\nexport function bad() { return y(); }\n'
+  printf "$PROBE" > "$W/.quality-kit-src/ts/probe.ts"
+  # Positive control: the SAME violation in ordinary repo code. It must be
+  # reported. Without it, "zero diagnostics from .quality-kit-src" is satisfied
+  # just as well by a linter that never ran — a config-load failure, a missing
+  # ultracite, an oxlint that died on startup. Silence is not proof.
+  printf "$PROBE" > "$W/control.ts"
 
-  out="$(cd "$W" && "$OXLINT" -f json . 2>/dev/null || true)"
-  leaked="$(python3 -c "
+  ERR="$W.stderr"
+  rc=0
+  out="$(cd "$W" && "$OXLINT" -f json . 2>"$ERR")" || rc=$?
+
+  # Do NOT swallow the exit status. oxlint exits non-zero both for "found
+  # violations" (expected — the control trips one) and for "failed to run", and
+  # only the output shape tells them apart: valid JSON carrying a diagnostics
+  # list means it genuinely linted. Anything else is a failure to report, not
+  # zero findings. (Flagged by CodeRabbit: the first version piped stderr to
+  # /dev/null and `|| true`, so a crashed oxlint produced empty stdout, parsed
+  # as zero diagnostics, and PASSed without testing anything.)
+  read -r ran leaked controls <<<"$(python3 -c "
 import json,sys
-d=json.loads(sys.stdin.read() or '{\"diagnostics\":[]}')
-print(len([x for x in d['diagnostics']
-           if (x.get('filename') or '').replace('./','').startswith('.quality-kit-src')]))" <<<"$out")"
-  [ "$leaked" = 0 ] \
-    && ok "$profile: .quality-kit-src excluded from the repo's lint" \
-    || bad "$profile: .quality-kit-src excluded from the repo's lint" "$leaked diagnostic(s) came from the kit checkout"
-  rm -r "$W"
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+    diags = d['diagnostics']
+    if not isinstance(diags, list): raise ValueError
+except Exception:
+    print('0 0 0'); sys.exit()
+name = lambda x: (x.get('filename') or '').replace('./','')
+print(1,
+      len([x for x in diags if name(x).startswith('.quality-kit-src')]),
+      len([x for x in diags if name(x) == 'control.ts']))" <<<"$out")"
+
+  if [ "$ran" != 1 ]; then
+    bad "$profile: .quality-kit-src excluded from the repo's lint" \
+        "oxlint did not produce a diagnostics list (exit $rc): $(head -c 300 "$ERR")"
+  elif [ "$controls" -lt 1 ]; then
+    bad "$profile: .quality-kit-src excluded from the repo's lint" \
+        "positive control was not reported — the linter ran but this probe no longer trips a rule, so the ignore assertion below proves nothing"
+  elif [ "$leaked" != 0 ]; then
+    bad "$profile: .quality-kit-src excluded from the repo's lint" \
+        "$leaked diagnostic(s) came from the kit checkout"
+  else
+    ok "$profile: .quality-kit-src excluded from the repo's lint (control reported, kit checkout silent)"
+  fi
+  rm -r "$W"; rm -f "$ERR"
 done
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
