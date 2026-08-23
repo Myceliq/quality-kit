@@ -48,6 +48,7 @@ jobs:
           fail=0
           for t in hooks/hooks.test.sh \
                    hooks/git-pre-commit.test.sh \
+                   hooks/hooks-doctor.test.sh \
                    bin/count-suppressions.test.sh \
                    bin/stamp.test.sh \
                    bin/check-drift.test.sh \
