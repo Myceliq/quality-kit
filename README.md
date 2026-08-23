@@ -16,6 +16,27 @@ it is lint configs, shell scripts and a stamper.
 Design spec lives in the private cockpit repo
 (`docs/specs/2026-07-17-quality-platform-design.md`).
 
+## The global pre-commit gate
+
+`hooks/git-pre-commit` is the per-commit Codex review gate. Unlike everything
+under `ts/` and `py/`, it is **not** stamped into repos — it is installed once
+per machine as the global hook (`git config --global core.hooksPath`), so
+changing it here does not move any repo's pinned version.
+
+Its verdict parsing lives in `codex_verdict()`, deliberately split out and
+reachable via `CODEX_HOOK_LIB_ONLY=1` so it can be tested directly. **Findings
+are matched before any approval signal**, and every case in
+`hooks/git-pre-commit.test.sh` is a commit that really did pass while the hook
+printed success. Read the comments there before widening a regex — two of them
+document gaps that are deliberate, where the obvious "fix" reopens a hole.
+
+`hooks/hooks-doctor.sh <workspace-root>` answers the question nothing else on a
+box can: *is the gate actually live here?* A repo-local `core.hooksPath`
+silently overrides the global one, and git skips a hooks directory with no
+`pre-commit` without any error at all — so an ungated repo looks exactly like a
+gated one. It reports `OK` / `STALE` / `GATE-OFF` / `ORPHAN` per repo and exits
+non-zero if any live repo is ungated.
+
 ## .quality-kit.json (written into each stamped repo)
 
     {

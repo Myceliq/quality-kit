@@ -1,6 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Classify a Codex review into a gate decision. Reads the review on stdin, echoes
+# one of: block | drift | lgtm | clean. Split out from the gate below so it can be
+# exercised directly — see hooks/git-pre-commit.test.sh. Every bug this function
+# encodes was a commit that passed while the hook printed success.
+codex_verdict() {
+  local out; out="$(cat)"
+  # A marker inside single-line backticks is the review TALKING ABOUT the syntax,
+  # not raising a finding — "blocks on every `[P0-9]` substring". Reviewing this
+  # very file produces reviews full of that, so strip those spans before matching.
+  # Deliberately narrow: markers are NOT required to start a line, because a real
+  # finding can sit mid-sentence ("LGTM apart from the [P1] below") and anchoring
+  # to line starts would hand back exactly the bypass this function exists to close.
+  #
+  # This ONE strip is the whole sanitizer, and that is the point. Earlier versions
+  # also dropped ``` fenced blocks wholesale and every double-quoted span, which
+  # reopened the hole this function exists to close from the other side: a review
+  # that fences its findings, or returns them as JSON ("title":"[P1] ..."), had
+  # every marker erased before matching and came out `clean`. A sanitizer that can
+  # delete the only evidence of a finding is a fail-open path, so it is gone.
+  # A marker in a fenced or quoted span therefore BLOCKS. That costs a false block
+  # when a review quotes a marker at this file; a human reads it and moves on.
+  # The reverse error — a silent pass on a real finding — is the one that ships.
+  local scan; scan="$(printf '%s' "$out" | sed -e 's/`[^`]*`//g')"
+  # Findings FIRST. The approval check used to run first, unanchored and
+  # case-insensitive, so "LGTM apart from the [P1] SQL injection below" exited 0
+  # before [P1] was ever examined — as did Codex merely QUOTING a diff line
+  # containing the word ("// LGTM once tests pass").
+  if printf '%s' "$scan" | grep -qE '\[P[0-9]\]'; then echo block; return; fi
+  # Priority-shaped text that lost its brackets. Positive evidence of findings in
+  # a shape this gate cannot parse is NOT the same as Codex being unavailable, so
+  # it blocks rather than falling open — previously it printed "no issues flagged".
+  # Matches mid-sentence too ("the remaining P1: ..."), not just at a line start.
+  # The separator is what distinguishes a finding from prose that merely names a
+  # tier: a hyphen counts only with whitespace BOTH sides ("- P3 - nit"), never
+  # glued to a word, or "No P1-level concern is evident" — an ordinary clean
+  # review — would block. A bare token with no separator at all ("one P2 concern
+  # remains") is deliberately NOT matched: nothing lexical separates it from
+  # prose, and blocking every review that mentions a priority level is how this
+  # gate would get switched off for good. Pinned in both directions by tests.
+  if printf '%s' "$scan" | grep -qE 'P[0-9]([[:space:]]*[:.)]|[[:space:]]+-[[:space:]])'; then echo drift; return; fi
+  # An approval must be the review's own verdict, at the start of a line.
+  if printf '%s' "$out" | grep -qE '^[[:space:]]*(#{1,6}[[:space:]]*|[-*][[:space:]]*)?LGTM\b'; then echo lgtm; return; fi
+  # No markers at all is a genuine clean review, NOT a parse failure: `codex exec
+  # review` imposes its own output schema and ignores appended format demands —
+  # verified, an added "end with VERDICT: CLEAN|ISSUES" instruction was never once
+  # echoed. Requiring a positive approval token would therefore alarm on EVERY
+  # clean commit, and an alarm that cries wolf every time is how the real one gets
+  # ignored. Do not "harden" this into an inconclusive state without re-checking
+  # what Codex actually emits on a clean diff.
+  echo clean
+}
+
+# Sourced by the test suite to reach codex_verdict() without running the gate.
+if [ -n "${CODEX_HOOK_LIB_ONLY:-}" ]; then return 0 2>/dev/null || exit 0; fi
+
 # --- Dependency justification check (advisory; set DEP_JUSTIFICATION_ENFORCE=1 to hard-block) ---
 # Runs before the Codex review so dep-related issues surface early.
 # Honors bypass tokens "deps:noop|cleanup|reorder" in the commit body.
@@ -15,9 +70,18 @@ QK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -n "$QK_ROOT" ] && [ -f "$QK_ROOT/.quality-kit.json" ]; then
   QK_RUNNER="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('runner','npm'))" "$QK_ROOT/.quality-kit.json" 2>/dev/null || echo npm)"
   echo "[quality-kit] validate:fast (runner: $QK_RUNNER)..."
+  # Scrub the inherited git context, exactly as the Codex call below already does.
+  # git exports GIT_DIR/GIT_INDEX_FILE to every hook, and validate:fast runs the
+  # repo's OWN test suite — any test that shells out to git in a temp repo then
+  # silently operates on THIS repo instead. That is not hypothetical: it fails 45
+  # of harness's tests, and only ever inside a commit, so the suite looks broken
+  # rather than mis-scoped.
+  QK_GIT_SCRUB=(env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_PREFIX
+                -u GIT_AUTHOR_DATE -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL
+                -u GIT_EDITOR -u GIT_CONFIG_PARAMETERS)
   case "$QK_RUNNER" in
-    npm)  (cd "$QK_ROOT" && npm run --silent validate:fast) ;;
-    make) (cd "$QK_ROOT" && make validate-fast) ;;
+    npm)  (cd "$QK_ROOT" && "${QK_GIT_SCRUB[@]}" npm run --silent validate:fast) ;;
+    make) (cd "$QK_ROOT" && "${QK_GIT_SCRUB[@]}" make validate-fast) ;;
     *)    true ;;
   esac || {
     echo "[quality-kit] BLOCKED — validate:fast failed. Fix and retry the commit." >&2
@@ -230,6 +294,9 @@ Review ONLY the following staged diff for bugs, security issues, and correctness
 Do NOT search the filesystem or explore files outside this diff.
 Focus exclusively on what is shown below.
 
+Tag every actionable finding with a bracketed priority marker: [P1], [P2] or [P3].
+This hook blocks on those markers; an unmarked finding is one nobody is told about.
+
 Files changed:
 ${STAGED_FILES}
 
@@ -272,23 +339,35 @@ if [ "$REVIEW_COMPLETED" -ne 1 ]; then
   exit 0
 fi
 
-# If Codex says LGTM, allow the commit
-if echo "$REVIEW_OUTPUT" | grep -qi "LGTM"; then
-  echo "[codex-hook] ✓ Codex approved. Proceeding with commit."
-  exit 0
-fi
-
-# Also allow if Codex found no actionable issues (no [P1]/[P2]/[P3] markers)
-if ! echo "$REVIEW_OUTPUT" | grep -qE '\[P[0-9]\]'; then
-  echo "[codex-hook] ✓ No issues flagged. Proceeding with commit."
-  exit 0
-fi
-
-# Codex flagged issues
-echo "──────────────────────────────────────────────────"
-echo "[codex-hook] BLOCKED — Codex flagged issues above."
-echo "[codex-hook] Fix the issues and retry the commit."
-echo "──────────────────────────────────────────────────"
+# --- Verdict parsing ---------------------------------------------------------
+# ORDER MATTERS: findings are checked BEFORE any approval signal. The reverse
+# order let a conditional approval through — "LGTM apart from the [P1] SQL
+# injection below" matched an unanchored, case-insensitive LGTM and exited 0
+# before the [P1] check ever ran. Codex merely QUOTING a diff line containing the
+# word ("// LGTM once tests pass") defeated the gate the same way.
+case "$(printf '%s' "$REVIEW_OUTPUT" | codex_verdict)" in
+  lgtm)
+    echo "[codex-hook] ✓ Codex approved. Proceeding with commit."
+    exit 0
+    ;;
+  clean)
+    echo "[codex-hook] ✓ No issues flagged. Proceeding with commit."
+    exit 0
+    ;;
+  drift)
+    echo "──────────────────────────────────────────────────"
+    echo "[codex-hook] BLOCKED — priority-shaped findings with no [Pn] marker."
+    echo "[codex-hook] The review reported issues in a form this gate cannot parse,"
+    echo "[codex-hook] so it was NOT evaluated. Read the review above before retrying."
+    echo "──────────────────────────────────────────────────"
+    ;;
+  *)
+    echo "──────────────────────────────────────────────────"
+    echo "[codex-hook] BLOCKED — Codex flagged issues above."
+    echo "[codex-hook] Fix the issues and retry the commit."
+    echo "──────────────────────────────────────────────────"
+    ;;
+esac
 
 # Interactive terminal: give the human a choice
 if [ -t 0 ]; then
