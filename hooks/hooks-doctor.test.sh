@@ -158,4 +158,14 @@ mrc=$?
   && ok "missing ROOT fails closed instead of reporting silent success" \
   || bad "missing ROOT fails closed instead of reporting silent success" "rc=$mrc $mout"
 
+# A find that FAILS must not read as "nothing wrong". An invalid maxdepth makes
+# find exit non-zero with no output, the loop never runs, and this reported
+# "all repos gated" with exit 0 — an entire unscanned fleet certified healthy.
+# Measured before the fix: HOOKS_DOCTOR_MAXDEPTH=abc → clean bill, exit 0.
+dout2="$(GIT_GLOBAL_HOOKS="$T/globalhooks" HOOKS_DOCTOR_MAXDEPTH=abc bash "$DOCTOR" "$T/repos" 2>&1)"
+drc2=$?
+[ "$drc2" != 0 ] && ! grep -q "all repos gated" <<<"$dout2" \
+  && ok "an unusable maxdepth fails closed instead of certifying an unscanned tree" \
+  || bad "an unusable maxdepth fails closed instead of certifying an unscanned tree" "rc=$drc2 $dout2"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo "SOME FAILED"; exit 1; }

@@ -61,6 +61,25 @@ if [ ! -d "$ROOT" ] || [ ! -r "$ROOT" ]; then
 fi
 
 bad=0
+# `find` FAILING must never read as "nothing wrong". An invalid
+# HOOKS_DOCTOR_MAXDEPTH, or a traversal error, yields an empty or short list;
+# the loop then never runs, bad stays 0, and this printed "all repos gated"
+# and exited 0 — a whole unscanned fleet certified healthy, which is the exact
+# false success this script exists to prevent. Measured before the fix:
+# HOOKS_DOCTOR_MAXDEPTH=abc → "all repos gated", exit 0.
+# Collected to a file rather than a process substitution so the pipeline's
+# status is observable at all; `pipefail` (set at the top) makes that status
+# find's, not sort's. A partial traversal still prints what it found — the
+# rows are useful — but can never end in a clean bill.
+FOUND="$(mktemp)"
+trap 'rm -f "$FOUND"' EXIT
+discovery_failed=0
+if ! find "$ROOT" -maxdepth "$MAXDEPTH" -name .git 2>/dev/null | sort > "$FOUND"; then
+  echo "hooks-doctor: repo discovery failed under $ROOT (maxdepth=$MAXDEPTH)." >&2
+  echo "hooks-doctor: any results below are INCOMPLETE — not a clean bill of health." >&2
+  discovery_failed=1
+fi
+
 # -name .git matches worktrees too, where it is a FILE rather than a directory.
 while IFS= read -r dotgit; do
   repo="$(dirname "$dotgit")"
@@ -100,7 +119,13 @@ while IFS= read -r dotgit; do
     printf 'STALE    %-46s %s\n' "$repo" "$hooks_dir (differs from global gate)"
     bad=1
   fi
-done < <(find "$ROOT" -maxdepth "$MAXDEPTH" -name .git 2>/dev/null | sort)
+done < "$FOUND"
 
-[ "$bad" = 0 ] && echo "hooks-doctor: all repos gated by the current global hook"
-exit "$bad"
+# The clean bill requires BOTH that every repo scanned was gated AND that the
+# scan actually covered the tree. Either one alone is a claim this script cannot
+# support.
+if [ "$bad" = 0 ] && [ "$discovery_failed" = 0 ]; then
+  echo "hooks-doctor: all repos gated by the current global hook"
+  exit 0
+fi
+exit 1
