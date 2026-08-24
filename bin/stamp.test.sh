@@ -20,13 +20,27 @@ mk_ts_repo() {
 }
 
 R="$(mk_ts_repo)"
-bash "$S" "$R" --profile nextjs
+first_out="$(bash "$S" "$R" --profile nextjs 2>&1)"
+echo "$first_out"
 
 for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/suppression-baseline.json \
          .quality/manifest.sha256 .quality-kit.json oxlint.config.ts oxfmt.config.ts \
          tsconfig.quality.json .github/workflows/quality.yml .codex/hooks.json .claude/settings.json; do
   [ -f "$R/$f" ] && ok "stamped $f" || bad "stamped $f" "missing"
 done
+
+# stamping .codex/hooks.json does not arm it — Codex skips a project's hooks
+# unless the project is trusted AND the hook approved, both silently. Losing
+# this line is how the kit goes back to shipping a gate nobody knows is off.
+# Assert BOTH gates and the config boundary: a grep on the first clause alone
+# stays green while the warning silently loses the second activation condition,
+# which is the one nobody performs.
+echo "$first_out" | grep -q "INERT until Codex trusts this project AND the hooks are approved once" \
+  && ok "stamp names both Codex trust gates" \
+  || bad "stamp names both Codex trust gates" "$first_out"
+echo "$first_out" | grep -Fq 'does not read or write $CODEX_HOME/config.toml, default ~/.codex' \
+  && ok "stamp states the kit does not grant trust itself" \
+  || bad "stamp states the kit does not grant trust itself" "$first_out"
 
 python3 -c "
 import json

@@ -37,6 +37,50 @@ silently overrides the global one, and git skips a hooks directory with no
 gated one. It reports `OK` / `STALE` / `GATE-OFF` / `ORPHAN` per repo and exits
 non-zero if any live repo is ungated.
 
+## The stamped Codex hooks (`.codex/hooks.json`)
+
+The stamp writes `.codex/hooks.json` — a `PostToolUse` formatter and a `Stop`
+gate that runs `.quality/stop-validate.sh` at turn end. **Stamping the file is
+not enough to make it run.** Codex applies two independent trust gates, and
+each drops the hooks *silently*: no warning on the run, nothing in the
+transcript, so a stamped-but-inert repo looks exactly like a gated one.
+
+1. **The project must be trusted.** A project's `.codex/` config layer is
+   discarded at load unless that project is trusted in the user's own Codex
+   config — in `$CODEX_HOME/config.toml`, where `$CODEX_HOME` defaults to
+   `~/.codex`:
+
+       [projects."<path>"]
+       trust_level = "trusted"
+
+   and `hooks.json` is only read from layers that
+   survived the load — so an untrusted project has no hooks at all. Codex's
+   interactive TUI asks "do you trust this folder?" the first time it opens
+   one; the non-interactive runner grants and persists the same trust by
+   itself *when the sandbox already permits writing the working directory*.
+   Under a read-only sandbox, or against an explicit
+   `trust_level = "untrusted"`, the hooks never load.
+2. **Each hook must be approved once.** Even inside a trusted project, a hook
+   Codex has not seen before counts as untrusted and does not run until it is
+   approved in the TUI's hooks browser (which records its hash under
+   `[hooks.state]`) or the invocation opts out of the review with
+   `--dangerously-bypass-hook-trust`. Re-stamping a *changed* `hooks.json`
+   changes that hash and needs a fresh approval.
+
+So on a freshly stamped repo the Codex-side turn-end gate is **off** until
+someone has opened that repo in Codex once and approved the hooks. Confirm it
+rather than assuming; the same `.quality/stop-validate.sh` also hangs off the
+`Stop` hook in `.claude/settings.json`, which has no trust gate, so one agent's
+side can be gated while Codex's is inert. The kit never reads or writes
+`$CODEX_HOME/config.toml` — granting trust is the operator's call, on their own
+machine.
+
+Trust is keyed by path, so a second *clone* of the same repo needs its own
+entry. Linked git worktrees do not: Codex resolves a worktree to its main
+checkout before looking up trust, and reads the **main checkout's**
+`.codex/hooks.json` rather than the worktree's — which also means a `hooks.json`
+edited on a branch inside a worktree does not take effect there.
+
 ## .quality-kit.json (written into each stamped repo)
 
     {
@@ -97,6 +141,9 @@ re-stamp byte-exact.
 Hit during the mentzer-method pilot (Wave 1). Check these before opening the
 stamp PR — most of them BLOCK a green stamp.
 
+- **The stamped `.codex/hooks.json` does not run until Codex trusts the repo.**
+  Both of Codex's trust gates skip hooks silently, so the stamp looks complete
+  while the turn-end gate is off. See "The stamped Codex hooks" above.
 - **`.claude/` gitignored.** The stamp writes `.claude/settings.json` (Stop +
   PostToolUse hooks); a repo that ignores all of `/.claude/` never commits it,
   so the drift gate fails (`… lost or altered the kit … hook`). Carve it out —
