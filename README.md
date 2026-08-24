@@ -112,6 +112,17 @@ stamp PR — most of them BLOCK a green stamp.
   pre-burn-down. Commit the initial stamp from a context without the kit hook
   (or via `git commit-tree`). This is the one bootstrap exception — never
   `--no-verify` on the burn-down work itself.
+- **nextjs profile floors `next` at 16.3.1, and the drift gate enforces it.**
+  Anything older **segfaults** in `next build` under `CI=1` against the pinned
+  `typescript@7` (measured: 16.2.4 → exit 139/134, deterministic; 16.3.1 → exit 0
+  and it type-checks with TS7). Both halves of the failure are invisible: a local
+  build sees TS7 as missing, quietly `npm install`s its own TypeScript and goes
+  green, while the CI log ends at `Command "npm run build" exited with 1` naming
+  neither TypeScript nor a signal. Fix with `npm install next@latest` and commit
+  the lockfile. The gate reads `package-lock.json`, not the `package.json` range —
+  `npm ci` installs the lock, so a conforming `^16.3.1` over a stale lock still
+  ships the segfault. Do **not** reach for `typescript: { ignoreBuildErrors: true }`:
+  on a current Next it suppresses a check that works.
 - **codex may false-flag the TS7 pin.** The pre-commit heuristic flags
   `typescript@7.0.2` as "outside the lint peer range". Benign —
   `oxlint-tsgolint` is the TS-Go-native linter, built for TS7.

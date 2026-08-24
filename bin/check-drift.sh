@@ -138,6 +138,50 @@ def check_overrides():
     if not isinstance(ign, list) or any(not isinstance(g, str) for g in ign):
         err("ignoreOverrides must be a list of glob strings — fix .quality-kit.json")
 
+NEXT_FLOOR = (16, 3, 1)
+
+def _semver(v):
+    # "16.3.1" -> ((16,3,1), 1); "16.3.1-canary.0" -> ((16,3,1), 0). A prerelease
+    # sorts BELOW its release per semver, which is also the conservative reading
+    # for a gate whose miss is a silent segfault.
+    base, _, pre = str(v).partition("-")
+    nums = tuple(int(x) for x in base.split(".")[:3])
+    return nums + (0,) * (3 - len(nums)), 0 if pre else 1
+
+def check_next_floor():
+    # next < 16.3.1 SEGFAULTS during `next build` under CI=1 against the kit's
+    # pinned typescript@7. Measured on booking-platform, same commit, only the
+    # Next version varying: 16.2.4 -> exit 139 then 134, deterministic; 16.3.1 ->
+    # exit 0, and it type-checks with TS7. This is gated rather than documented
+    # because both halves of the failure are invisible (cockpit#87):
+    #   - Invisible locally. A non-CI `next build` sees typescript@7 as missing,
+    #     shells out to `npm install typescript` and goes green, so developers
+    #     see a passing build while CI and production crash.
+    #   - No diagnostic where it lands. Vercel's log ends at "Command
+    #     npm run build exited with 1" — nothing names TypeScript, Next, or a
+    #     signal. So this message carries the explanation the crash lacks.
+    # The LOCKFILE is the ground truth, not package.json: `npm ci` installs
+    # exactly the lockfile, and a range like ^16.2.4 says nothing about which
+    # version CI actually resolves.
+    lock = os.path.join(repo, "package-lock.json")
+    if not os.path.exists(lock):
+        err(f"profile=nextjs cannot verify the next >= {'.'.join(map(str, NEXT_FLOOR))} floor without package-lock.json — commit the lockfile (quality.yml runs `npm ci`, which requires one regardless)")
+        return
+    lk = json.load(open(lock))
+    # lockfileVersion 2/3 key packages by install path; v1 used a flat map.
+    entry = lk.get("packages", {}).get("node_modules/next") or lk.get("dependencies", {}).get("next")
+    if not entry or not entry.get("version"):
+        err("profile=nextjs but package-lock.json pins no next version — run npm install to refresh the lockfile, then commit it")
+        return
+    got = entry["version"]
+    try:
+        below = _semver(got) < _semver(".".join(map(str, NEXT_FLOOR)))
+    except ValueError:
+        err(f"cannot parse the locked next version {got!r} — refresh package-lock.json with npm install")
+        return
+    if below:
+        err(f"next {got} is below the required {'.'.join(map(str, NEXT_FLOOR))} — it SEGFAULTS in `next build` under CI=1 against the kit's pinned typescript@7 (exit 139/134, no diagnostic in the build log), while a local build silently installs its own TypeScript and passes. Run: npm install next@latest, then commit package-lock.json. See README 'Stamping a repo — known gotchas'")
+
 def main():
     check_overrides()
     if profile != "python":
@@ -157,6 +201,8 @@ def main():
             err(f"profile {profile} inconsistent with dependencies (next present) — restore correct profile and re-stamp")
         elif "react" in deps and profile not in ("nextjs", "vite"):
             err(f"profile {profile} inconsistent with dependencies (react present) — restore correct profile and re-stamp")
+        if profile == "nextjs":
+            check_next_floor()
         ts = jsonc(os.path.join(repo, "tsconfig.json"))
         ext = ts.get("extends", "")
         # exact match required, and it must be the LAST entry in an array —
