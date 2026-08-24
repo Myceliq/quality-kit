@@ -8,8 +8,11 @@ Validation contract, identical local and CI (`npm run` / `make` per this repo's
   extras → build. CI runs exactly this.
 - `validate:fast` (make: `validate-fast`) — repair loop: format:check → lint →
   typecheck → affected tests. Run after EVERY implementation attempt and
-  before reporting done. Hooks and pre-commit run it for you; delegates
-  without hooks must run it themselves.
+  before reporting done. Never assume a hook already ran it: the stamped
+  `.codex/hooks.json` turn-end gate stays inert until the user has trusted
+  this project and approved the hooks in their own Codex config, and it is
+  skipped silently until then. Pre-commit still runs it. If you cannot paste
+  the output, you have not run it.
 
 Rules (CI drift gate enforces these — a PR that violates them cannot merge):
 

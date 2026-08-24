@@ -20,13 +20,21 @@ mk_ts_repo() {
 }
 
 R="$(mk_ts_repo)"
-bash "$S" "$R" --profile nextjs
+first_out="$(bash "$S" "$R" --profile nextjs 2>&1)"
+echo "$first_out"
 
 for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/suppression-baseline.json \
          .quality/manifest.sha256 .quality-kit.json oxlint.config.ts oxfmt.config.ts \
          tsconfig.quality.json .github/workflows/quality.yml .codex/hooks.json .claude/settings.json; do
   [ -f "$R/$f" ] && ok "stamped $f" || bad "stamped $f" "missing"
 done
+
+# stamping .codex/hooks.json does not arm it — Codex skips a project's hooks
+# unless the project is trusted AND the hook approved, both silently. Losing
+# this line is how the kit goes back to shipping a gate nobody knows is off.
+echo "$first_out" | grep -q "INERT until Codex trusts" \
+  && ok "stamp flags .codex/hooks.json as inert until trusted" \
+  || bad "stamp flags .codex/hooks.json as inert until trusted" "$first_out"
 
 python3 -c "
 import json

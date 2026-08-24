@@ -192,3 +192,9 @@ echo "stamped $REPO (profile=$PROFILE, kit=$VERSION)"
 # stamp PRs stall on one of these (npm ci reconcile, .claude gitignore, the
 # first-commit hook bootstrap, protected-path override).
 echo "→ before committing: read 'Stamping a repo — known gotchas' in quality-kit/README.md"
+# .codex/hooks.json is written like any other stamped file, but writing it does
+# not arm it: Codex drops a project's hooks unless the project is trusted in the
+# user's own config, and drops an unreviewed hook even in a trusted project —
+# both silently. Say so here, because a stamp that looks complete is exactly
+# when the operator stops checking. The kit does not touch ~/.codex/config.toml.
+echo "→ .codex/hooks.json is stamped but INERT until Codex trusts this project AND the hooks are approved once — read 'The stamped Codex hooks' in quality-kit/README.md"
