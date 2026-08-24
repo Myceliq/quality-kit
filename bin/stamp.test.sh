@@ -38,7 +38,7 @@ done
 echo "$first_out" | grep -q "INERT until Codex trusts this project AND the hooks are approved once" \
   && ok "stamp names both Codex trust gates" \
   || bad "stamp names both Codex trust gates" "$first_out"
-echo "$first_out" | grep -q "does not read or write ~/.codex/config.toml" \
+echo "$first_out" | grep -Fq 'does not read or write $CODEX_HOME/config.toml, default ~/.codex' \
   && ok "stamp states the kit does not grant trust itself" \
   || bad "stamp states the kit does not grant trust itself" "$first_out"
 

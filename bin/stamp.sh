@@ -196,9 +196,9 @@ echo "→ before committing: read 'Stamping a repo — known gotchas' in quality
 # not arm it: Codex drops a project's hooks unless the project is trusted in the
 # user's own config, and drops an unreviewed hook even in a trusted project —
 # both silently. Say so here, because a stamp that looks complete is exactly
-# when the operator stops checking. The kit does not touch ~/.codex/config.toml.
+# when the operator stops checking. The kit does not touch the Codex config.
 echo "→ .codex/hooks.json is stamped but INERT until Codex trusts this project AND the hooks are approved once — read 'The stamped Codex hooks' in quality-kit/README.md"
 # The boundary belongs in the OUTPUT, not only in this comment: an operator told
 # a control is off will look for the switch, and needs to know the kit did not
 # flip it for them and will not.
-echo "  (the kit does not read or write ~/.codex/config.toml — granting trust is yours to do)"
+echo "  (the kit does not read or write "'$CODEX_HOME'"/config.toml, default ~/.codex — granting trust is yours to do)"

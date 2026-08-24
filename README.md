@@ -47,7 +47,8 @@ transcript, so a stamped-but-inert repo looks exactly like a gated one.
 
 1. **The project must be trusted.** A project's `.codex/` config layer is
    discarded at load unless that project is trusted in the user's own Codex
-   config — in `~/.codex/config.toml`:
+   config — in `$CODEX_HOME/config.toml`, where `$CODEX_HOME` defaults to
+   `~/.codex`:
 
        [projects."<path>"]
        trust_level = "trusted"
@@ -71,7 +72,7 @@ someone has opened that repo in Codex once and approved the hooks. Confirm it
 rather than assuming; the same `.quality/stop-validate.sh` also hangs off the
 `Stop` hook in `.claude/settings.json`, which has no trust gate, so one agent's
 side can be gated while Codex's is inert. The kit never reads or writes
-`~/.codex/config.toml` — granting trust is the operator's call, on their own
+`$CODEX_HOME/config.toml` — granting trust is the operator's call, on their own
 machine.
 
 Trust is keyed by path, so a second *clone* of the same repo needs its own
