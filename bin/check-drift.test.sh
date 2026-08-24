@@ -11,9 +11,14 @@ ok()  { echo "PASS $1"; }
 bad() { echo "FAIL $1: $2"; fail=1; }
 
 fresh() { # stamped nextjs fixture repo (carries a "next" dependency so the
-          # I2 profile/dependency guard has something real to cross-check)
-  local r; r="$(mktemp -d)"
-  (cd "$r" && git init -q && git config core.hooksPath /dev/null && printf '{"name":"fix","dependencies":{"next":"^14.2.0"},"scripts":{"build":"true"}}' > package.json \
+          # I2 profile/dependency guard has something real to cross-check, and a
+          # package-lock.json because the nextjs floor check reads the version
+          # `npm ci` would actually install, not the range package.json declares).
+          # $1 overrides the locked next version; the default clears the floor.
+  local r nv="${1:-16.3.1}"; r="$(mktemp -d)"
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null \
+    && printf '{"name":"fix","dependencies":{"next":"^%s"},"scripts":{"build":"true"}}' "$nv" > package.json \
+    && printf '{"lockfileVersion":3,"packages":{"node_modules/next":{"version":"%s"}}}' "$nv" > package-lock.json \
     && printf '{}' > tsconfig.json && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
   bash "$DIR/stamp.sh" "$r" --profile nextjs >/dev/null
   echo "$r"
@@ -132,6 +137,55 @@ d['scripts']=json.load(open('$KITROOT/ts/package-scripts.node.json'))
 json.dump(d,open(p,'w'))"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*inconsistent with dependencies" && ok "profile relabeled within ts family (next dependency) caught" || bad "profile relabeled within ts family (next dependency) caught" "$out"
+
+# I3: the nextjs `next >= 16.3.1` floor (cockpit#87). Below it, `next build`
+# segfaults under CI=1 against the kit's pinned typescript@7 while a local build
+# passes — so the gate is the only place this is visible before production.
+R="$(fresh 16.2.4)"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*next 16.2.4 is below" && ok "next below the floor caught" || bad "next below the floor caught" "$out"
+
+R="$(fresh 17.0.0)"   # a future major is above the floor, not below it
+run "$R" >/dev/null && ok "next above the floor stays clean" || bad "next above the floor stays clean" "$(run "$R" || true)"
+
+# a prerelease of the floor sorts BELOW the floor — 16.3.1-canary.0 is not 16.3.1
+R="$(fresh 16.3.1-canary.0)"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*is below" && ok "prerelease of the floor caught" || bad "prerelease of the floor caught" "$out"
+
+# the RANGE in package.json must not be what's trusted: ^16.3.1 declared while
+# the lockfile — the thing npm ci installs — still pins a segfaulting 16.2.4.
+R="$(fresh 16.2.4)"
+python3 -c "
+import json; p='$R/package.json'; d=json.load(open(p)); d['dependencies']['next']='^16.3.1'; json.dump(d,open(p,'w'))"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*is below" && ok "conforming range cannot mask a stale lockfile" || bad "conforming range cannot mask a stale lockfile" "$out"
+
+# fail-closed: no lockfile means the floor is unverifiable, which must not read as a pass
+R="$(fresh)"; rm -f "$R/package-lock.json"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*without package-lock.json" && ok "missing lockfile fails closed" || bad "missing lockfile fails closed" "$out"
+
+# fail-closed: a lockfile present but pinning no next at all
+R="$(fresh)"; printf '{"lockfileVersion":3,"packages":{}}' > "$R/package-lock.json"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*pins no next version" && ok "lockfile without next fails closed" || bad "lockfile without next fails closed" "$out"
+
+# lockfileVersion 1 keyed its deps flat rather than by install path
+R="$(fresh)"; printf '{"lockfileVersion":1,"dependencies":{"next":{"version":"16.2.4"}}}' > "$R/package-lock.json"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*is below" && ok "v1 lockfile shape still checked" || bad "v1 lockfile shape still checked" "$out"
+
+# the floor is a nextjs-profile rule — a vite repo carrying an old next-like pin is not its business
+R="$(fresh 16.2.4)"
+python3 -c "
+import json; p='$R/package.json'; d=json.load(open(p)); del d['dependencies']['next']; d['dependencies']['react']='^18'; json.dump(d,open(p,'w'))
+q='$R/.quality-kit.json'; d=json.load(open(q)); d['profile']='vite'; json.dump(d,open(q,'w'))"
+cp "$KITROOT/ts/oxlint.config.vite.ts" "$R/oxlint.config.ts"
+python3 -c "
+import json; p='$R/package.json'; d=json.load(open(p)); d['scripts']=json.load(open('$KITROOT/ts/package-scripts.vite.json')); json.dump(d,open(p,'w'))"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "is below" && bad "the floor does not apply off the nextjs profile" "$out" || ok "the floor does not apply off the nextjs profile"
 
 # --- overrides schema (static, no toolchain needed) ---
 # helper: mutate a fresh fixture's .quality-kit.json, then run drift
