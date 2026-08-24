@@ -198,3 +198,7 @@ echo "→ before committing: read 'Stamping a repo — known gotchas' in quality
 # both silently. Say so here, because a stamp that looks complete is exactly
 # when the operator stops checking. The kit does not touch ~/.codex/config.toml.
 echo "→ .codex/hooks.json is stamped but INERT until Codex trusts this project AND the hooks are approved once — read 'The stamped Codex hooks' in quality-kit/README.md"
+# The boundary belongs in the OUTPUT, not only in this comment: an operator told
+# a control is off will look for the switch, and needs to know the kit did not
+# flip it for them and will not.
+echo "  (the kit does not read or write ~/.codex/config.toml — granting trust is yours to do)"

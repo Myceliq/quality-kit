@@ -47,8 +47,12 @@ transcript, so a stamped-but-inert repo looks exactly like a gated one.
 
 1. **The project must be trusted.** A project's `.codex/` config layer is
    discarded at load unless that project is trusted in the user's own Codex
-   config (`[projects."<path>"] trust_level = "trusted"` in
-   `~/.codex/config.toml`), and `hooks.json` is only read from layers that
+   config — in `~/.codex/config.toml`:
+
+       [projects."<path>"]
+       trust_level = "trusted"
+
+   and `hooks.json` is only read from layers that
    survived the load — so an untrusted project has no hooks at all. Codex's
    interactive TUI asks "do you trust this folder?" the first time it opens
    one; the non-interactive runner grants and persists the same trust by
