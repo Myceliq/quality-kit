@@ -90,6 +90,23 @@ if profile != "python":
     pkg.setdefault("scripts", {}).update(j(os.path.join(kit, f"ts/package-scripts.{profile}.json")))
     dd = pkg.setdefault("devDependencies", {})
     dd.update(j(os.path.join(kit, "ts/pins.json")))
+    # engines: the pinned toolchain floors Node at 22.12.0 (ultracite pulls
+    # commander@15 at a flat >=22.12.0), and check-drift.sh now enforces that
+    # floor — so the stamper writes it, or every fresh stamp would fail the
+    # kit's own new gate. setdefault, not update: unlike scripts, this key is a
+    # repo-owned ceiling as much as a floor. A repo declaring a STRICTER
+    # engines.node (">=24") is making a real decision that canonical-wins would
+    # silently undo; a repo declaring a WEAKER one keeps it and the drift gate
+    # names the fix. Either way the stamper never lowers an existing floor.
+    # npm requires engines to be an OBJECT. A non-object one is malformed, has
+    # no key to preserve, and would make setdefault raise on a str — crashing
+    # the stamper on a repo it is supposed to repair. Replace it: the change is
+    # diff-visible in the stamp PR, which is where it should be argued.
+    eng = pkg.get("engines")
+    if not isinstance(eng, dict):
+        eng = pkg["engines"] = {}
+    for k, v in j(os.path.join(kit, "ts/engines.json")).items():
+        eng.setdefault(k, v)
     w(pkg_path, pkg)
     # tsconfig.json: point extends at the stamped fragment, preserving any
     # pre-existing chain (TS 5+ array form, quality fragment last so its
