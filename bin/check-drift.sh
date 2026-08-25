@@ -801,7 +801,7 @@ def _py_collection_override(name, src):
         # `=`, and TOML permits a quoted key — miss either and a valid override
         # reads as absent, so the gate enforces its defaults on a repo that has
         # legitimately moved its collection elsewhere.
-        elif section == want and re.split(r"[:=]", line, 1)[0].strip().strip("\"'") in PY_COLLECT_KEYS:
+        elif section == want and re.split(r"[:=]", line, maxsplit=1)[0].strip().strip("\"'") in PY_COLLECT_KEYS:
             return True
     return False
 # Quoted keys are normalized to bare ones before any of these run (see
