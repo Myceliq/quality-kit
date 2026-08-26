@@ -170,6 +170,55 @@ stamp PR — most of them BLOCK a green stamp.
   `npm ci` installs the lock, so a conforming `^16.3.1` over a stale lock still
   ships the segfault. Do **not** reach for `typescript: { ignoreBuildErrors: true }`:
   on a current Next it suppresses a check that works.
+- **The ts profiles floor Node at 22.12.0, and the drift gate enforces it.**
+  The pinned toolchain sets that floor: oxlint/oxfmt/Vite (and all their platform
+  bindings) declare `^20.19.0 || >=22.12.0`, and `ultracite` pulls `commander@15`
+  at a flat `>=22.12.0` with **no Node 20 branch** — so the intersection is
+  22.12.0, roughly two majors above what Next alone asks for. On Node 20.9–20.18
+  `npm run validate` dies on the *runtime* before it reads any code, and with
+  `engine-strict` the install itself fails; neither failure names Node. The
+  stamped `quality.yml` runs Node 24, so **CI never sees this** — only a developer
+  or a delegate on an older Node does. `stamp.sh` writes
+  `engines: { "node": ">=22.12.0" }` into `package.json`, and the gate fails the
+  repo if the declared range admits anything older. Note `^20.19.0 || >=22.12.0`
+  copied off oxlint does **not** satisfy it: `||` is OR, so that range still
+  admits Node 20.19. A *stricter* floor (`>=24`) is yours to keep — a re-stamp
+  never lowers one. The range parser is deliberately narrow (`>=`, `^`, `~`,
+  `=`, exact, x-ranges, combined with spaces and `||`); anything else —
+  hyphen ranges, `v`-prefixes, prereleases, build metadata, a strict `>`, two
+  lower bounds in one branch — is **refused, not guessed at**, with a message
+  naming what to write instead. A range whose bounds admit no Node at all
+  (`>=22.12.0 <22.12.0`) is reported as unsatisfiable.
+- **A stamped repo must have at least one test file, and the drift gate enforces
+  it.** `test:unit` is in the canonical `validate` chain, and both runners treat
+  an empty collection as a failure — `vitest run` exits 1, `pytest` exits 5 and
+  `make` propagates it — so a repo stamped with no tests is **red on day one**,
+  for a reason its own build log explains badly. The gate matches the runner's
+  real collection rules — including each runner's own exclusions, plus every
+  dotted directory so the kit's in-repo `.quality-kit-src` checkout is never
+  counted. On the ts profiles that is vitest's default include
+  `**/*.{test,spec}.?(c|m)[jt]s?(x)` **and** a *bound* suite declaration inside
+  it: a matching file that declares none is collected and then fails with `No
+  test suite found in file`, which is the same red. Bound matters — vitest's
+  `globals` default is **false**, so `it` / `test` / `describe` / `suite` /
+  `bench` must be imported from `vitest` (named, aliased, or as a namespace)
+  unless your vitest config sets `test.globals: true`; a bare `it(...)` with no
+  import throws `it is not defined` at run time. On python it is pytest's default
+  `test_*.py` / `*_test.py` **and** a real item inside it — a top-level `test*`
+  function, or a `test*` method on a top-level `Test*` class or any
+  `unittest.TestCase` subclass — checked against the file's AST rather than by
+  grep. pytest imports a matching module and still exits 5 if it declares no
+  item, so neither a helper named `test_helpers.py`, nor `class TestHelpers:
+  pass`, nor a `test_x` method on a plain non-`Test*` class satisfies the gate.
+  Fix it by writing a test — `src/smoke.test.ts` or `tests/test_smoke.py`. A
+  repo that configures its runner's collection away from the defaults (a
+  `test.include` in a vitest config, `python_files` / `testpaths` in a pytest
+  config) gets an explicit hand-off instead: the gate cannot evaluate those
+  rules before install, says so on stderr, and leaves the guarantee to the
+  repo's own `validate` run. Do **not** reach for `vitest run --passWithNoTests`:
+  it turns the repo green by deleting the requirement rather than meeting it,
+  and would go on silently absorbing a later misconfiguration that stops
+  collecting the tests you do have.
 - **codex may false-flag the TS7 pin.** The pre-commit heuristic flags
   `typescript@7.0.2` as "outside the lint peer range". Benign —
   `oxlint-tsgolint` is the TS-Go-native linter, built for TS7.

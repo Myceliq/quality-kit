@@ -52,6 +52,9 @@ p=json.load(open('$R/package.json'))
 assert p['scripts']['dev']=='next dev', 'existing scripts preserved'
 assert 'validate' in p['scripts'] and 'validate:fast' in p['scripts']
 assert p['devDependencies']['oxlint']=='1.74.0' and p['devDependencies']['typescript']=='7.0.2'
+# the stamper writes the Node floor its own drift gate enforces — a fresh stamp
+# must never be red on the kit's own new gate
+assert p['engines']['node']==json.load(open('$DIR/../ts/engines.json'))['node'], p.get('engines')
 base=json.load(open('$R/.quality/suppression-baseline.json'))
 assert base['ts-ignore']==1, base   # counted from legacy.ts, not zeroed
 ts=json.load(open('$R/tsconfig.json'))
@@ -127,6 +130,39 @@ assert d.get('customRepoKey')=='keep', f'stamper dropped an unknown top-level re
 assert d['ruleOverrides'].get('futureSubkey')=={}, f'stamper dropped an unknown ruleOverrides subkey on re-stamp: {d}'
 " && ok "override keys survive re-stamp" || bad "override keys survive re-stamp" "assertion failed"
 
+# engines.node is setdefault, not canonical-wins: a repo that declared a
+# STRICTER floor made a real decision, and clobbering it to the kit's ">=22.12.0"
+# would silently LOWER a floor while looking like a routine re-stamp.
+G="$(mktemp -d)"
+(cd "$G" && git init -q && git config core.hooksPath /dev/null \
+  && printf '{"name":"g","engines":{"node":">=24.0.0","npm":">=10"}}' > package.json \
+  && printf '{}' > tsconfig.json \
+  && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+bash "$S" "$G" --profile node >/dev/null 2>&1
+python3 -c "
+import json
+e=json.load(open('$G/package.json'))['engines']
+assert e['node']=='>=24.0.0', f'stamper lowered a stricter engines.node floor: {e}'
+assert e['npm']=='>=10', f'stamper dropped a repo-owned engines key: {e}'
+" && ok "stamp never lowers a stricter engines.node" || bad "stamp never lowers a stricter engines.node" "assertion failed"
+
+# FIX (codex pre-commit, round 17): npm requires engines to be an OBJECT, and a
+# malformed non-object one must not crash the stamper on the very repo it is
+# supposed to repair.
+B="$(mktemp -d)"
+(cd "$B" && git init -q && git config core.hooksPath /dev/null \
+  && printf '{"name":"b","engines":"node >=20"}' > package.json \
+  && printf '{}' > tsconfig.json \
+  && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+rc=0; bash "$S" "$B" --profile node >/dev/null 2>&1 || rc=$?
+[ "$rc" = 0 ] && ok "stamp survives a non-object engines" || bad "stamp survives a non-object engines" "rc=$rc"
+python3 -c "
+import json
+e=json.load(open('$B/package.json'))['engines']
+want=json.load(open('$DIR/../ts/engines.json'))['node']
+assert isinstance(e, dict) and e['node']==want, e
+" && ok "a non-object engines is replaced with the kit floor" || bad "a non-object engines is replaced with the kit floor" "assertion failed"
+
 # first stamp without a toolchain must still succeed, leaving burnDown empty and
 # naming the follow-up command (stamp itself stays offline and deterministic).
 # Deterministic regardless of the HOST's own tooling: baseline-rules.sh checks
@@ -163,6 +199,7 @@ if command -v uvx >/dev/null 2>&1 || command -v ruff >/dev/null 2>&1; then
   Y="$(mktemp -d)"
   (cd "$Y" && git init -q && git config core.hooksPath /dev/null \
     && printf 'import sys\nimport os\n\nx = 1\n' > a.py \
+    && printf 'def test_smoke():\n    assert True\n' > test_smoke.py \
     && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
   bash "$S" "$Y" --profile python >/dev/null 2>&1
   python3 -c "
