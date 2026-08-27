@@ -472,6 +472,24 @@ git -C "$R" add -A
 out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
 echo "$out" | grep -q "^4 tracked source lines" && ok "tsx nested JSX in attr expr does not hide the file" || bad "tsx nested JSX in attr expr does not hide the file" "$out"
 
+# --- tsx nested JSX cannot open a bounded false comment ---
+# The real comment below closes the false opener a counter-based JSX state sees
+# in the nested span's raw text. Because it closes before EOF, the fail-safe for
+# unterminated comments cannot recover the swallowed code lines.
+R="$(mkrepo)"
+cat > "$R/nested_bounded.tsx" <<'EOF'
+const view = <Comp child={<span>/* literal</span>} />;
+const a = 1;
+const b = 2;
+/* a real comment */
+const c = 3;
+EOF
+git -C "$R" add -A
+out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
+# Four code lines count; the standalone real comment remains free. The broken
+# counter reports only two after swallowing `const a` and `const b`.
+echo "$out" | grep -q "^4 tracked source lines" && ok "tsx nested JSX cannot open bounded false comment" || bad "tsx nested JSX cannot open bounded false comment" "$out"
+
 
 # --- over budget: exit 1 ---
 R="$(mkrepo)"

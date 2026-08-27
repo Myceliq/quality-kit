@@ -158,7 +158,21 @@ def js_lines(lines, is_jsx=False):
     is_closing_tag = False
     is_self_closing = False
     is_generic_tag = False
-    jsx_expr_depth = 0
+    jsx_expr_stack = []
+
+    def push_jsx_expr():
+        nonlocal jsx_depth, in_jsx_tag, tag_bracket_depth
+        nonlocal is_closing_tag, is_self_closing, is_generic_tag
+        jsx_expr_stack.append((jsx_depth, in_jsx_tag, tag_bracket_depth,
+                               is_closing_tag, is_self_closing, is_generic_tag))
+        jsx_depth, in_jsx_tag, tag_bracket_depth = 0, False, 0
+        is_closing_tag = is_self_closing = is_generic_tag = False
+
+    def pop_jsx_expr():
+        nonlocal jsx_depth, in_jsx_tag, tag_bracket_depth
+        nonlocal is_closing_tag, is_self_closing, is_generic_tag
+        (jsx_depth, in_jsx_tag, tag_bracket_depth,
+         is_closing_tag, is_self_closing, is_generic_tag) = jsx_expr_stack.pop()
 
     for line in lines:
         in_template_payload = (len(template_stack) > 0 and template_stack[-1] == 0)
@@ -216,10 +230,10 @@ def js_lines(lines, is_jsx=False):
                     i += 1
                 else:
                     i += 1
-            elif is_jsx and jsx_depth > 0 and jsx_expr_depth == 0 and not in_jsx_tag:
+            elif is_jsx and jsx_depth > 0 and not in_jsx_tag:
                 if line[i] == "{":
                     has_code = True
-                    jsx_expr_depth += 1
+                    push_jsx_expr()
                     prev_char = "{"
                     last_word = ""
                     in_word = False
@@ -260,40 +274,30 @@ def js_lines(lines, is_jsx=False):
                     last_word = ""
                     in_word = False
                     i += 1
-                elif line[i] == "`" and jsx_expr_depth > 0:
-                    has_code = True
-                    template_stack.append(0)
-                    in_template_payload = True
-                    prev_char = "`"
-                    last_word = ""
-                    in_word = False
-                    i += 1
                 elif line[i] == "{":
                     has_code = True
-                    jsx_expr_depth += 1
+                    push_jsx_expr()
                     prev_char = "{"
                     last_word = ""
                     in_word = False
                     i += 1
                 elif line[i] == "}":
                     has_code = True
-                    if jsx_expr_depth > 0:
-                        jsx_expr_depth -= 1
                     prev_char = "}"
                     last_word = ""
                     in_word = False
                     i += 1
-                elif line[i] == "<" and jsx_expr_depth == 0:
+                elif line[i] == "<":
                     has_code = True
                     tag_bracket_depth += 1
                     prev_char = "<"
                     i += 1
-                elif line[i] == "," and jsx_expr_depth == 0 and tag_bracket_depth == 1:
+                elif line[i] == "," and tag_bracket_depth == 1:
                     has_code = True
                     is_generic_tag = True
                     prev_char = ","
                     i += 1
-                elif line[i] == "=" and jsx_expr_depth == 0 and tag_bracket_depth == 1:
+                elif line[i] == "=" and tag_bracket_depth == 1:
                     has_code = True
                     j = i + 1
                     while j < len(line) and line[j].isspace():
@@ -302,45 +306,13 @@ def js_lines(lines, is_jsx=False):
                         is_generic_tag = True
                     prev_char = "="
                     i += 1
-                elif jsx_expr_depth > 0 and line[i] == "/" and not line.startswith("/*", i) and not line.startswith("//", i) and (prev_char is None or prev_char in REGEX_CHARS or last_word in REGEX_KEYWORDS):
-                    # Regex literal inside JSX attribute expression e.g. pattern={/[/*]/}
-                    has_code = True
-                    j = i + 1
-                    in_cc = False
-                    is_regex = False
-                    while j < len(line):
-                        if line[j] == "\\":
-                            j += 2
-                        elif line[j] == "[" and not in_cc:
-                            in_cc = True
-                            j += 1
-                        elif line[j] == "]" and in_cc:
-                            in_cc = False
-                            j += 1
-                        elif line[j] == "/" and not in_cc:
-                            j += 1
-                            while j < len(line) and line[j].isalpha():
-                                j += 1
-                            i = j
-                            is_regex = True
-                            prev_char = "/regex"
-                            last_word = ""
-                            in_word = False
-                            break
-                        else:
-                            j += 1
-                    if not is_regex:
-                        prev_char = "/"
-                        last_word = ""
-                        in_word = False
-                        i += 1
                 elif line[i] == "/":
                     has_code = True
-                    if i + 1 < len(line) and line[i + 1] == ">" and jsx_expr_depth == 0:
+                    if i + 1 < len(line) and line[i + 1] == ">":
                         is_self_closing = True
                     prev_char = "/"
                     i += 1
-                elif line[i] == ">" and jsx_expr_depth == 0:
+                elif line[i] == ">":
                     has_code = True
                     tag_bracket_depth -= 1
                     if tag_bracket_depth <= 0:
@@ -372,7 +344,7 @@ def js_lines(lines, is_jsx=False):
                                 in_word = True
                             else:
                                 last_word += c
-                            if last_word == "extends" and jsx_expr_depth == 0 and tag_bracket_depth == 1:
+                            if last_word == "extends" and tag_bracket_depth == 1:
                                 is_generic_tag = True
                         else:
                             in_word = False
@@ -426,16 +398,16 @@ def js_lines(lines, is_jsx=False):
                     last_word = ""
                     in_word = False
                     i += 1
-                elif is_jsx and line[i] == "{" and jsx_depth > 0:
+                elif is_jsx and line[i] == "{" and jsx_expr_stack:
                     has_code = True
-                    jsx_expr_depth += 1
+                    push_jsx_expr()
                     prev_char = "{"
                     last_word = ""
                     in_word = False
                     i += 1
-                elif is_jsx and line[i] == "}" and jsx_expr_depth > 0:
+                elif is_jsx and line[i] == "}" and jsx_expr_stack:
                     has_code = True
-                    jsx_expr_depth -= 1
+                    pop_jsx_expr()
                     prev_char = "}"
                     last_word = ""
                     in_word = False

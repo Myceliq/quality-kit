@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+gate_skipped() { echo "GATE_SKIPPED reason=$1"; }
+
 # Classify a Codex review into a gate decision. Reads the review on stdin, echoes
 # one of: block | drift | lgtm | clean. Split out from the gate below so it can be
 # exercised directly — see hooks/git-pre-commit.test.sh. Every bug this function
@@ -97,11 +99,13 @@ fi
 # Ensure codex is available
 if ! command -v codex &>/dev/null; then
   echo "[codex-hook] codex CLI not found — skipping review."
+  gate_skipped codex_unavailable
   exit 0
 fi
 
 # Only review if there are staged changes
 if git diff --cached --quiet; then
+  gate_skipped no_staged_changes
   exit 0
 fi
 
@@ -189,6 +193,7 @@ run_codex_review() {
       return 0
     fi
     echo "[codex-hook] Codex produced no final review output — allowing commit."
+    gate_skipped no_final_output
     if [ -s "$TRANSCRIPT_FILE" ]; then
       sed -n '1,120p' "$TRANSCRIPT_FILE"
     fi
@@ -197,10 +202,12 @@ run_codex_review() {
 
   if [ "$exit_code" -eq 124 ] || [ "$exit_code" -eq 142 ]; then
     echo "[codex-hook] Codex timed out after ${CODEX_HOOK_TIMEOUT_SECONDS}s — skipping review."
+    gate_skipped timeout
     return 124
   fi
 
   echo "[codex-hook] Codex failed to run — allowing commit."
+  gate_skipped execution_failed
   if [ -s "$TRANSCRIPT_FILE" ]; then
     sed -n '1,120p' "$TRANSCRIPT_FILE"
   fi
@@ -226,6 +233,7 @@ if [ -z "$NON_PLAN_FILES" ] && [ -n "$STAGED_FILES" ]; then
 
   if [ "$STAGED_DIFF_BYTES" -gt "$CODEX_HOOK_MAX_DIFF_BYTES" ]; then
     echo "[codex-hook] Plan diff is ${STAGED_DIFF_BYTES} bytes, over ${CODEX_HOOK_MAX_DIFF_BYTES}-byte limit — skipping architecture review."
+    gate_skipped plan_diff_too_large
     exit 0
   fi
 
@@ -285,6 +293,7 @@ REVIEW_OUTPUT=""
 
 if [ "$STAGED_DIFF_BYTES" -gt "$CODEX_HOOK_MAX_DIFF_BYTES" ]; then
   echo "[codex-hook] Staged diff is ${STAGED_DIFF_BYTES} bytes, over ${CODEX_HOOK_MAX_DIFF_BYTES}-byte limit — skipping Codex review."
+  gate_skipped diff_too_large
   echo "[codex-hook] Continuing with any other commit checks."
   echo ""
 else

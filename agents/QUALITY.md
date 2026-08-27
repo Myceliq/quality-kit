@@ -14,6 +14,15 @@ Validation contract, identical local and CI (`npm run` / `make` per this repo's
   skipped silently until then. Pre-commit still runs it. If you cannot paste
   the output, you have not run it.
 
+Working contract:
+
+- Keep touched logic locally understandable and units focused on one responsibility.
+  Use distinctive domain names that make code easy to find.
+- Preserve verified WHY/provenance comments; remove comments that only restate code.
+  Bug fixes require regression tests for the failed behavior.
+- Errors must name the operation and expected condition using only safe identifiers —
+  never secrets, credentials, customer payloads, or other PII.
+
 Rules (CI drift gate enforces these — a PR that violates them cannot merge):
 
 - Never edit stamped files (`.quality/`, `oxlint.config.ts`, `oxfmt.config.ts`,
