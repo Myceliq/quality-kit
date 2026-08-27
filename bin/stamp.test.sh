@@ -23,7 +23,7 @@ R="$(mk_ts_repo)"
 first_out="$(bash "$S" "$R" --profile nextjs 2>&1)"
 echo "$first_out"
 
-for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/suppression-baseline.json \
+for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/agent-legibility.ts .quality/suppression-baseline.json \
          .quality/manifest.sha256 .quality-kit.json oxlint.config.ts oxfmt.config.ts \
          tsconfig.quality.json .github/workflows/quality.yml .codex/hooks.json .claude/settings.json; do
   [ -f "$R/$f" ] && ok "stamped $f" || bad "stamped $f" "missing"
@@ -191,6 +191,78 @@ import json
 d=json.load(open('$N/.quality-kit.json'))
 assert d['ruleOverrides']['burnDown']=={'func-style':7}, d
 " && ok "re-stamp does not regenerate the burn-down" || bad "re-stamp does not regenerate the burn-down" "assertion failed"
+
+# Mature repos already have non-empty ledgers, so a plain "seed only when
+# empty" policy would turn newly shipped fleet rules into an immediate red
+# wall. Seed this cohort once, merge only missing rules, and never reset either
+# an existing count or a shape count after the cohort marker lands.
+if [ -n "${OXLINT_BIN:-}" ] && [ -x "$OXLINT_BIN" ]; then
+  U="$(mk_ts_repo)"
+  bash "$S" "$U" --profile node >/dev/null 2>&1
+  python3 -c "
+import json
+p='$U/.quality-kit.json'; d=json.load(open(p))
+d['ruleOverrides']['burnDown']={'func-style':7}
+json.dump(d,open(p,'w'))"
+  printf 'export function shape(value: number) {\n' > "$U/shape.ts"
+  for i in $(seq 1 10); do printf '  if (value === %s) return %s;\n' "$i" "$i" >> "$U/shape.ts"; done
+  printf '  return 0;\n}\n' >> "$U/shape.ts"
+  NM="$(cd "$(dirname "$OXLINT_BIN")/.." && pwd)"
+  mkdir -p "$U/node_modules/.bin"
+  ln -s "$NM/oxlint" "$U/node_modules/oxlint"
+  ln -s "$NM/ultracite" "$U/node_modules/ultracite"
+  # The focused CI toolchain intentionally lacks tsgolint. Keep the production
+  # script unchanged but strip only --type-aware in this shape-rule fixture;
+  # these four rules are AST-only and the real pinned Oxlint still executes.
+  printf '#!/usr/bin/env bash\nargs=()\nfor arg in "$@"; do [ "$arg" = --type-aware ] || args+=("$arg"); done\nexec %q "${args[@]}"\n' "$OXLINT_BIN" > "$U/node_modules/.bin/oxlint"
+  chmod +x "$U/node_modules/.bin/oxlint"
+  bash "$S" "$U" --profile node >/dev/null 2>&1
+  python3 -c "
+import json
+d=json.load(open('$U/.quality-kit.json')); burn=d['ruleOverrides']['burnDown']
+assert burn['func-style']==7, ('existing count reset', burn)
+assert burn['complexity']==1, ('new shape violation not seeded', burn)
+assert d['shapeGateVersion']==1, d
+" && ok "TS upgrade seeds missing shape debt without resetting existing counts" || bad "TS upgrade seeds missing shape debt without resetting existing counts" "assertion failed"
+
+  # A later violation must not be silently absorbed by another re-stamp.
+  cp "$U/shape.ts" "$U/shape-two.ts"
+  bash "$S" "$U" --profile node >/dev/null 2>&1
+  python3 -c "
+import json
+d=json.load(open('$U/.quality-kit.json'))
+assert d['ruleOverrides']['burnDown']['complexity']==1, d
+" && ok "shape cohort marker prevents later re-baselining" || bad "shape cohort marker prevents later re-baselining" "count changed"
+else
+  echo "SKIP TS shape upgrade seed (set OXLINT_BIN to the pinned toolchain)"
+fi
+
+if command -v ruff >/dev/null 2>&1; then
+  V="$(mktemp -d)"
+  (cd "$V" && git init -q && git config core.hooksPath /dev/null \
+    && printf 'def test_smoke():\n    assert True\n' > test_smoke.py \
+    && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+  bash "$S" "$V" --profile python >/dev/null 2>&1
+  python3 -c "
+import json
+p='$V/.quality-kit.json'; d=json.load(open(p))
+d.pop('shapeGateVersion', None)
+d['ruleOverrides']['burnDown']={'F401':7}
+json.dump(d,open(p,'w'))"
+  printf 'def shape(value: int) -> int:\n' > "$V/shape.py"
+  for i in $(seq 1 10); do printf '    if value == %s:\n        return %s\n' "$i" "$i" >> "$V/shape.py"; done
+  printf '    return 0\n' >> "$V/shape.py"
+  bash "$S" "$V" --profile python >/dev/null 2>&1
+  python3 -c "
+import json
+d=json.load(open('$V/.quality-kit.json')); burn=d['ruleOverrides']['burnDown']
+assert burn['F401']==7, ('existing count reset', burn)
+assert burn['C901']==1, ('new Python shape violation not seeded', burn)
+assert d['shapeGateVersion']==1, d
+" && ok "Python upgrade seeds C901 without resetting existing counts" || bad "Python upgrade seeds C901 without resetting existing counts" "assertion failed"
+else
+  echo "SKIP Python shape upgrade seed (ruff unavailable)"
+fi
 
 # ORDERING REGRESSION: on a python first stamp the burn-down is seeded and THEN
 # ruff.toml is rendered. Reverse the two and the rendered file omits every rule

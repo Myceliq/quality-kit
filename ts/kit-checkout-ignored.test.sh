@@ -29,6 +29,8 @@ NM="$(cd "$(dirname "$OXLINT")/.." && pwd)"
 for profile in nextjs vite node; do
   W="$(mktemp -d)"
   ln -s "$NM" "$W/node_modules"
+  mkdir -p "$W/.quality"
+  cp "$DIR/agent-legibility.ts" "$W/.quality/agent-legibility.ts"
   cp "$KITROOT/ts/oxlint.config.$profile.ts" "$W/oxlint.config.ts"
   cat > "$W/.quality-kit.json" <<'JSON'
 {"version":"0.4.1","profile":"node","runner":"npm","pendingFlags":[],

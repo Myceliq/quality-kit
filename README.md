@@ -85,6 +85,7 @@ edited on a branch inside a worktree does not take effect there.
 
     {
       "version": "0.2.0", "profile": "nextjs", "runner": "npm", "pendingFlags": [],
+      "shapeGateVersion": 1,
       "ruleOverrides": {
         "burnDown":  { "func-style": 143 },
         "permanent": { "import/no-default-export": { "level": "off", "why": "Next.js pages require default exports" } }
@@ -97,6 +98,12 @@ edited on a branch inside a worktree does not take effect there.
 - `profile` — which kit shape is stamped. `runner` — `npm` or `make`.
 - `pendingFlags` — tsconfig strict flags a repo may temporarily override to
   `false` while burning down errors (sanctioned staging; drift-visible).
+- `shapeGateVersion` — kit-owned cohort marker, written only after a successful
+  agent-legibility baseline. On the first re-stamp that introduces a cohort,
+  the stamper merges counts for newly enabled rules into a mature repo's
+  existing ledger without changing existing counts. Once marked, a later
+  regression is never silently re-baselined. If the linter is unavailable the
+  marker stays absent and the stamp names the required install/re-stamp step.
 - `ruleOverrides.burnDown` — `rule → allowed violation count`, generated on
   first stamp by `bin/baseline-rules.sh`. Applied at `warn` on TS profiles
   (visible, non-blocking); `extend-ignore`d on python, since ruff has no warn
@@ -120,8 +127,16 @@ Rule ids use **config form**, not diagnostic form: core eslint rules are bare
 (`func-style`), everything else is `plugin/rule` (`unicorn/filename-case`).
 `bin/baseline-rules.sh` normalizes oxlint's `plugin(rule)` diagnostics for you.
 
-Everything except `version` / `profile` / `runner` is repo-owned and survives a
-re-stamp byte-exact.
+The fleet agent-legibility ceilings are cyclomatic complexity 10 and nesting
+depth 3 on every profile. TS profiles also enforce function SLOC 80 and file
+SLOC 500, excluding blank and comment-only lines. Ruff has no native
+file/function SLOC rule, so Python deliberately does not substitute its
+statement-count rule for a different metric. Python's nesting rule (`PLR1702`)
+is selected explicitly under lint-only preview mode; unrelated preview rules
+remain off.
+
+Everything except `version` / `profile` / `runner` / `shapeGateVersion` is
+repo-owned and survives a re-stamp byte-exact.
 
 ## Rule overrides — how they are enforced
 

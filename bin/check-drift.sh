@@ -45,6 +45,7 @@ if [ "$PROFILE" = python ]; then
     || err "root Makefile no longer includes Makefile.quality — restore the include line"
 else
   [ -f "$REPO/Makefile.quality" ] && err "profile=$PROFILE but Makefile.quality (python-profile artifact) is present — profile field does not match the repo's actual stamped file set"
+  same ts/agent-legibility.ts .quality/agent-legibility.ts
   same "ts/oxlint.config.$PROFILE.ts" oxlint.config.ts
   same ts/oxfmt.config.ts oxfmt.config.ts
   same ts/tsconfig.strict.json tsconfig.quality.json

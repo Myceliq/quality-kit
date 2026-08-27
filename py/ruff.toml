@@ -6,7 +6,17 @@ target-version = "py312"
 # defaults (E4/E7/E9/F) + bugbear, import sort, py-upgrade, flake8-bandit
 # "S" is the flake8-bandit port — it covers Bandit's core checks without a second tool in the
 # per-commit layer (cockpit#60). Standalone Bandit only earns a slot if a bake-off shows a delta.
-extend-select = ["B", "I", "UP", "S"]
+extend-select = ["B", "I", "UP", "S", "C901", "PLR1702"]
+# PLR1702 is a preview rule in Ruff 0.15; exact selection keeps unrelated
+# preview rules off while this rule gives Python the same nesting ceiling.
+preview = true
+explicit-preview-rules = true
+
+[lint.mccabe]
+max-complexity = 10
+
+[lint.pylint]
+max-nested-blocks = 3
 
 [lint.per-file-ignores]
 # `assert` IS the test and self-check idiom here (ponytail's one-runnable-check convention), so

@@ -6,6 +6,11 @@ import core from "ultracite/oxlint/core";
 import next from "ultracite/oxlint/next";
 import react from "ultracite/oxlint/react";
 
+import {
+  agentLegibilityRules,
+  withAgentLegibilityOptions,
+} from "./.quality/agent-legibility.ts";
+
 // Repo-specific overrides, declared once in .quality-kit.json and self-applied
 // here so this file stays byte-identical across the fleet (the drift gate
 // compares it byte-for-byte). Resolved against import.meta.url — i.e. relative
@@ -32,14 +37,18 @@ try {
   }
 }
 // burn-down stays at `warn`: switching it off would hide the very violations
-// the drift ratchet has to count.
+// the drift ratchet has to count. Preserve fleet options while downgrading:
+// `"warn"` alone would silently restore each rule's upstream default limit.
 const burnDown = Object.fromEntries(
-  Object.keys(qk.ruleOverrides?.burnDown ?? {}).map((r) => [r, "warn"])
+  Object.keys(qk.ruleOverrides?.burnDown ?? {}).map((r) => [
+    r,
+    withAgentLegibilityOptions(r, "warn"),
+  ])
 );
 const permanent = Object.fromEntries(
   Object.entries(qk.ruleOverrides?.permanent ?? {}).map(([r, v]) => [
     r,
-    v.level,
+    withAgentLegibilityOptions(r, v.level),
   ])
 );
 
@@ -60,6 +69,7 @@ export default defineConfig({
     ...(qk.ignoreOverrides ?? []),
   ],
   rules: {
+    ...agentLegibilityRules,
     // Keep the rule for `return undefined` / `x = undefined`, but stop it
     // stripping type-REQUIRED argument undefineds — e.g. Vitest 4's
     // `mockResolvedValue(undefined)`, where removing the arg is a type error.

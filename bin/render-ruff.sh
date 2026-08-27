@@ -32,12 +32,12 @@ arr = lambda xs: "[" + ", ".join(json.dumps(x) for x in xs) + "]"
 # TOML forbids duplicate tables, so splice around the existing one.
 i = next((k for k, l in enumerate(base) if l.strip() == "[lint]"), len(base))
 head, rest = base[:i], base[i:]
-# find where the [lint] table body actually ends — the next top-level table
-# declaration (not a [lint.*] subtable) — rather than assuming [lint] runs to
-# EOF. That keeps extend-ignore inside [lint] even if the base later grows a
-# table after it, instead of silently landing in whatever comes next.
+# Find where the [lint] table body ends: ANY following table, including a
+# [lint.*] child, changes TOML's current table. Appending after
+# [lint.per-file-ignores] would put extend-ignore in that child and make Ruff
+# reject the rendered file instead of ignoring the burn-down rules.
 j = next((k for k, l in enumerate(rest[1:], start=1)
-          if l.strip().startswith("[") and not l.strip().startswith("[lint.")), len(rest))
+          if l.strip().startswith("[")), len(rest))
 lint_body, tail = rest[:j], rest[j:]
 if excl:
     # normalize the blank line the base already carries before [lint], so the

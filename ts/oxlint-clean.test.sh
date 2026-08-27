@@ -36,6 +36,8 @@ OXLINT="$(cd "$(dirname "$OXLINT")" && pwd)/$(basename "$OXLINT")"
 
 W="$(mktemp -d)"
 ln -s "$NM" "$W/node_modules"
+mkdir -p "$W/.quality"
+cp "$DIR/agent-legibility.ts" "$W/.quality/agent-legibility.ts"
 # node.ts doubles as the active oxlint.config.ts for this run (any of the three
 # would do — they extend the same core preset); the copies alongside it are
 # then linted as plain source files under that config, same as the other two.
