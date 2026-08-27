@@ -54,12 +54,39 @@ rc=0; bash "$RR" "$R" > "$R/out.toml" 2>"$R/err.txt" || rc=$?
 cmp -s "$KITROOT/py/ruff.toml" "$R/out.toml" && ok "malformed ruleOverrides degrades to the base render" || bad "malformed ruleOverrides degrades to the base render" "$(diff "$KITROOT/py/ruff.toml" "$R/out.toml" || true)"
 
 # the rendered file must be valid TOML that ruff itself accepts
-if command -v uvx >/dev/null 2>&1; then
+if command -v ruff >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1; then
+  RUFF="ruff"; command -v ruff >/dev/null 2>&1 || RUFF="uvx ruff"
+  # Validate a real override render, not only the byte-identical base: the
+  # extend-ignore key must stay in [lint], before every [lint.*] child table.
+  A="$(mk '{"version":"0.2.0","profile":"python","runner":"make","pendingFlags":[],"ruleOverrides":{"burnDown":{"C901":1},"permanent":{}},"ignoreOverrides":[]}')"
+  bash "$RR" "$A" > "$A/ruff.toml"; printf 'import os\n' > "$A/probe.py"
   cp "$R/out.toml" "$R/ruff.toml"; printf 'import os\n' > "$R/probe.py"
-  (cd "$R" && uvx ruff check --exit-zero . >/dev/null 2>&1) \
+  (cd "$R" && $RUFF check --exit-zero . >/dev/null 2>&1) \
     && ok "rendered ruff.toml is accepted by ruff" || bad "rendered ruff.toml is accepted by ruff" "ruff rejected the file"
+  (cd "$A" && $RUFF check --exit-zero . >/dev/null 2>&1) \
+    && ok "rendered burn-down override is accepted by ruff" || bad "rendered burn-down override is accepted by ruff" "ruff rejected the override render"
+
+  # Break probes for both Python-native shape gates. Ruff has no file/function
+  # SLOC rule, so the Python profile deliberately stops at exact C901/PLR1702
+  # coverage rather than disguising max-statements as a line-count equivalent.
+  {
+    printf 'def complex(value: int) -> int:\n'
+    for i in $(seq 1 10); do printf '    if value == %s:\n        return %s\n' "$i" "$i"; done
+    printf '    return 0\n\n'
+    printf 'def deep(value: bool) -> int:\n'
+    printf '    if value:\n        while value:\n            for _ in range(1):\n                with open("x"):\n                    return 1\n'
+    printf '    return 0\n'
+  } > "$R/shape_probe.py"
+  out="$(cd "$R" && $RUFF check --output-format json shape_probe.py 2>/dev/null || true)"
+  python3 -c "
+import json,sys
+codes={x['code'] for x in json.loads(sys.stdin.read())}
+assert {'C901','PLR1702'} <= codes, codes
+" <<<"$out" \
+    && ok "ruff reports complexity=11 and nesting=4 break probes" \
+    || bad "ruff reports complexity=11 and nesting=4 break probes" "$out"
 else
-  echo "SKIP ruff acceptance (no uvx available)"
+  echo "SKIP ruff acceptance (no ruff or uvx available)"
 fi
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

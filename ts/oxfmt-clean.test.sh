@@ -28,6 +28,8 @@ NM="$(cd "$(dirname "$OXFMT")/.." && pwd)"
 W="$(mktemp -d)"
 ln -s "$NM" "$W/node_modules"
 cp "$DIR/oxfmt.config.ts" "$W/"
+mkdir -p "$W/.quality"
+cp "$DIR/agent-legibility.ts" "$W/.quality/agent-legibility.ts"
 cp "$DIR/oxlint.config.nextjs.ts" "$DIR/oxlint.config.vite.ts" "$DIR/oxlint.config.node.ts" "$W/"
 
 if out="$("$OXFMT" --check "$W" 2>&1)"; then

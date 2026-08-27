@@ -49,6 +49,7 @@ if [ "$PROFILE" = python ]; then
   touch "$REPO/Makefile"
   grep -q '^include Makefile.quality$' "$REPO/Makefile" || printf '\ninclude Makefile.quality\n' >> "$REPO/Makefile"
 else
+  put ts/agent-legibility.ts          644 .quality/agent-legibility.ts
   put "ts/oxlint.config.$PROFILE.ts" 644 oxlint.config.ts
   put ts/oxfmt.config.ts             644 oxfmt.config.ts
   put ts/tsconfig.strict.json        644 tsconfig.quality.json
@@ -146,6 +147,14 @@ else:
 open(am_path, "w").write(am if am.endswith("\n") else am + "\n")
 PY
 
+# Python has a rendered config rather than an executable one. Render the new
+# fleet rules once before counting so first stamps and upgrades count the same
+# rules they will enforce; the authoritative render still runs after seeding.
+if [ "$PROFILE" = python ]; then
+  bash "$KIT/bin/render-ruff.sh" "$REPO" > "$REPO/ruff.toml"
+  chmod 644 "$REPO/ruff.toml"
+fi
+
 # Burn-down baseline: generate from a real lint run whenever burnDown is EMPTY
 # — not literally "first stamp". stamp.sh adds oxlint/ruff to the repo's own
 # deps above, so on a genuine first stamp the linter usually isn't installed
@@ -184,12 +193,51 @@ PY
   fi
 fi
 
+# Agent-legibility rules arrived after mature repos already had non-empty
+# burn-down ledgers. Seed this rule cohort exactly once, merging only missing
+# positive counts; never reset or loosen a count the repo already owns. The
+# version marker prevents a clean rule from being silently re-baselined after a
+# later regression and gives a future cohort one explicit number to advance.
+SHAPE_GATE_VERSION=1
+case "$PROFILE" in
+  python) SHAPE_RULES="C901,PLR1702" ;;
+  *)      SHAPE_RULES="complexity,max-depth,max-lines,max-lines-per-function" ;;
+esac
+CURRENT_SHAPE_VERSION="$(python3 -c "
+import json,sys
+v=json.load(open(sys.argv[1])).get('shapeGateVersion', 0)
+print(v if isinstance(v, int) and not isinstance(v, bool) else 0)" "$REPO/.quality-kit.json")"
+if [ "$CURRENT_SHAPE_VERSION" -lt "$SHAPE_GATE_VERSION" ]; then
+  SHAPE_RC=0
+  SHAPE_COUNTS="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SHAPE_RULES" 2>/dev/null)" || SHAPE_RC=$?
+  if [ "$SHAPE_RC" = 0 ]; then
+    ADDED="$(python3 - "$REPO/.quality-kit.json" "$SHAPE_COUNTS" "$SHAPE_RULES" "$SHAPE_GATE_VERSION" <<'PY'
+import json, sys
+path, actual, rules, version = sys.argv[1:]
+d = json.load(open(path))
+counts = json.loads(actual)
+burn = d["ruleOverrides"]["burnDown"]
+added = 0
+for rule in rules.split(","):
+    if rule not in burn and counts.get(rule, 0) > 0:
+        burn[rule] = counts[rule]
+        added += 1
+d["shapeGateVersion"] = int(version)
+open(path, "w").write(json.dumps(d, indent=2) + "\n")
+print(added)
+PY
+)"
+    echo "→ seeded agent-legibility gate v$SHAPE_GATE_VERSION ($ADDED new burn-down rule(s); existing counts preserved)"
+  else
+    echo "→ agent-legibility baseline pending (baseline-rules.sh exit $SHAPE_RC) — after install, re-stamp to seed it"
+  fi
+fi
+
 # ruff.toml is a rendered file: kit base + this repo's declared overrides.
 # ORDERING: this must be the LAST thing that touches .quality-kit.json's
-# override keys before the manifest is hashed — it reads them. Task 6 inserts
-# burn-down seeding ABOVE this block for exactly that reason; a render that ran
-# first would omit the freshly seeded rules, leaving the repo red on day one and
-# permanently mismatched against a fresh render in the drift gate.
+# override keys before the manifest is hashed — it reads them. The preliminary
+# Python render above exists only to count the new fleet rules; this final render
+# includes every freshly seeded exception in the committed file.
 if [ "$PROFILE" = python ]; then
   bash "$KIT/bin/render-ruff.sh" "$REPO" > "$REPO/ruff.toml"
   chmod 644 "$REPO/ruff.toml"
