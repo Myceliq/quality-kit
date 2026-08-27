@@ -5,7 +5,7 @@ Validation contract, identical local and CI (`npm run` / `make` per this repo's
 `.quality-kit.json` runner):
 
 - `validate` — full gate: format:check → lint → typecheck → unit tests → repo
-  extras → build. CI runs exactly this.
+  extras → build. CI runs this after drift and any configured source budget.
 - `validate:fast` (make: `validate-fast`) — repair loop: format:check → lint →
   typecheck → affected tests. Run after EVERY implementation attempt and
   before reporting done. Never assume a hook already ran it: the stamped
@@ -52,6 +52,7 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
   - `ignoreOverrides` — repo-specific ignore globs (generated dirs, vendored
     code), appended to the fleet preset's patterns.
 - Never delete or skip tests to get green.
+- A configured `.quality-kit.json` `locBudget` is a CI gate, not advisory.
 - CHORE markers record out-of-footprint cleanup instead of doing it:
   `CHORE(<what is wrong>): <the cheaper shape>`, in that file's own comment syntax. Only in
   a file the change already touches — a marker in an untouched file widens the diff and

@@ -84,7 +84,7 @@ edited on a branch inside a worktree does not take effect there.
 ## .quality-kit.json (written into each stamped repo)
 
     {
-      "version": "0.2.0", "profile": "nextjs", "runner": "npm", "pendingFlags": [],
+      "version": "0.5.0", "profile": "nextjs", "runner": "npm", "pendingFlags": [],
       "shapeGateVersion": 1,
       "ruleOverrides": {
         "burnDown":  { "func-style": 143 },
@@ -120,20 +120,18 @@ edited on a branch inside a worktree does not take effect there.
   `LOC_BUDGET` env vars override this block; the block is the repo-committed
   default. Neither source configured is a loud refusal, not a
   default-everything sweep — sweeping the whole tree would silently count
-  vendored/generated code. Not wired into stamped CI in v1; run it as an
-  explicit CI step or locally.
+  vendored/generated code. Stamped CI runs it whenever the block exists; run
+  the same script locally from a quality-kit checkout when changing the budget.
 
 Rule ids use **config form**, not diagnostic form: core eslint rules are bare
 (`func-style`), everything else is `plugin/rule` (`unicorn/filename-case`).
 `bin/baseline-rules.sh` normalizes oxlint's `plugin(rule)` diagnostics for you.
 
-The fleet agent-legibility ceilings are cyclomatic complexity 10 and nesting
-depth 3 on every profile. TS profiles also enforce function SLOC 80 and file
-SLOC 500, excluding blank and comment-only lines. Ruff has no native
-file/function SLOC rule, so Python deliberately does not substitute its
-statement-count rule for a different metric. Python's nesting rule (`PLR1702`)
-is selected explicitly under lint-only preview mode; unrelated preview rules
-remain off.
+The fleet agent-legibility ceiling is cyclomatic complexity 10 on every
+profile. TS profiles also enforce nesting depth 3, function SLOC 80 and file
+SLOC 500, excluding blank and comment-only lines. Ruff has no stable native
+nesting or file/function SLOC rule, so Python deliberately does not turn a
+preview rule or statement count into a fleet merge gate for a different metric.
 
 Everything except `version` / `profile` / `runner` / `shapeGateVersion` is
 repo-owned and survives a re-stamp byte-exact.

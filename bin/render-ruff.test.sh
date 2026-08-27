@@ -66,25 +66,22 @@ if command -v ruff >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1; then
   (cd "$A" && $RUFF check --exit-zero . >/dev/null 2>&1) \
     && ok "rendered burn-down override is accepted by ruff" || bad "rendered burn-down override is accepted by ruff" "ruff rejected the override render"
 
-  # Break probes for both Python-native shape gates. Ruff has no file/function
-  # SLOC rule, so the Python profile deliberately stops at exact C901/PLR1702
-  # coverage rather than disguising max-statements as a line-count equivalent.
+  # Break probe for Python's stable native shape gate. Ruff has no stable
+  # nesting or file/function SLOC rule, so the Python profile deliberately
+  # stops at C901 rather than turning preview/statement rules into other metrics.
   {
     printf 'def complex(value: int) -> int:\n'
     for i in $(seq 1 10); do printf '    if value == %s:\n        return %s\n' "$i" "$i"; done
-    printf '    return 0\n\n'
-    printf 'def deep(value: bool) -> int:\n'
-    printf '    if value:\n        while value:\n            for _ in range(1):\n                with open("x"):\n                    return 1\n'
     printf '    return 0\n'
   } > "$R/shape_probe.py"
   out="$(cd "$R" && $RUFF check --output-format json shape_probe.py 2>/dev/null || true)"
   python3 -c "
 import json,sys
 codes={x['code'] for x in json.loads(sys.stdin.read())}
-assert {'C901','PLR1702'} <= codes, codes
+assert 'C901' in codes, codes
 " <<<"$out" \
-    && ok "ruff reports complexity=11 and nesting=4 break probes" \
-    || bad "ruff reports complexity=11 and nesting=4 break probes" "$out"
+    && ok "ruff reports complexity=11 break probe" \
+    || bad "ruff reports complexity=11 break probe" "$out"
 else
   echo "SKIP ruff acceptance (no ruff or uvx available)"
 fi

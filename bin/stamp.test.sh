@@ -28,6 +28,9 @@ for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/agent-leg
          tsconfig.quality.json .github/workflows/quality.yml .codex/hooks.json .claude/settings.json; do
   [ -f "$R/$f" ] && ok "stamped $f" || bad "stamped $f" "missing"
 done
+grep -q 'loc-budget.sh . --if-configured' "$R/.github/workflows/quality.yml" \
+  && ok "stamped CI enforces configured source budget" \
+  || bad "stamped CI enforces configured source budget" "workflow step missing"
 
 # stamping .codex/hooks.json does not arm it — Codex skips a project's hooks
 # unless the project is trusted AND the hook approved, both silently. Losing

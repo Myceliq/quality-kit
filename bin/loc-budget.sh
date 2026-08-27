@@ -2,8 +2,8 @@
 # What: fails when a stamped repo's configured source paths exceed its LoC
 #       budget, counting SLOC — blank lines, comment-only lines and Python
 #       docstrings are free.
-# Where: quality-kit/bin; wire into a stamped repo's CI same as
-#        check-drift.sh, or run locally before a push.
+# Where: quality-kit/bin; stamped CI runs it when locBudget is configured, and
+#        operators can run it locally before a push.
 # Why: ported from software-factory's scripts/loc-budget.sh (that repo's own
 #      gate, issue #190 — a predecessor reached ~15k source by building ahead
 #      of need; a blueprint doesn't prevent that, a failing check does). SLOC
@@ -14,7 +14,13 @@
 #      string in an `if` body. Ambiguity resolves toward counting.
 set -euo pipefail
 
-REPO="${1:?usage: loc-budget.sh <repo>}"
+REPO="${1:?usage: loc-budget.sh <repo> [--if-configured]}"
+IF_CONFIGURED=0
+case "${2:-}" in
+  "") ;;
+  --if-configured) IF_CONFIGURED=1 ;;
+  *) echo "usage: loc-budget.sh <repo> [--if-configured]" >&2; exit 64 ;;
+esac
 REPO="$(cd "$REPO" && pwd)"
 
 # ponytail: software-factory's original carried a FACTORY_GATE skip here —
@@ -29,15 +35,24 @@ REPO="$(cd "$REPO" && pwd)"
 # a default-everything sweep — a default sweep would silently count
 # vendored/generated code and inflate the budget without anyone noticing.
 QK="$REPO/.quality-kit.json"
-CFG_BUDGET="" CFG_PATHS=""
+CFG_PRESENT=0 CFG_BUDGET="" CFG_PATHS=""
 if [ -f "$QK" ]; then
+  CFG_PRESENT="$(python3 -c "import json,sys;print(1 if 'locBudget' in json.load(open(sys.argv[1])) else 0)" "$QK")"
   CFG_BUDGET="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('locBudget',{}).get('budget',''))" "$QK")"
   CFG_PATHS="$(python3 -c "import json,sys;print(' '.join(json.load(open(sys.argv[1])).get('locBudget',{}).get('paths',[])))" "$QK")"
 fi
 BUDGET="${LOC_BUDGET:-${CFG_BUDGET:-5000}}"
 PATHS="${LOC_PATHS:-$CFG_PATHS}"
 [ -n "$PATHS" ] || {
+  if [ "$IF_CONFIGURED" = 1 ] && [ "$CFG_PRESENT" = 0 ]; then
+    echo "source budget not configured — skipping"
+    exit 0
+  fi
   echo "loc-budget.sh: no source paths configured — set LOC_PATHS (space-separated git pathspecs) or .quality-kit.json's locBudget.paths; a default-everything sweep would count vendored/generated code" >&2
+  exit 64
+}
+[[ "$BUDGET" =~ ^[1-9][0-9]*$ ]] || {
+  echo "loc-budget.sh: budget must be a positive integer, got: $BUDGET" >&2
   exit 64
 }
 read -ra PATH_ARR <<<"$PATHS"

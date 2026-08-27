@@ -512,4 +512,14 @@ git -C "$R" add -A
 rc=0; err="$(bash "$LB" "$R" 2>&1 >/dev/null)" || rc=$?
 [ "$rc" = 64 ] && echo "$err" | grep -q "no source paths configured" && ok "unconfigured paths refuses loudly" || bad "unconfigured paths refuses loudly" "rc=$rc err=$err"
 
+# Stamped CI can call the gate unconditionally; an unconfigured repo reports a
+# deliberate skip, while a configured but malformed budget still fails closed.
+out="$(bash "$LB" "$R" --if-configured)"
+echo "$out" | grep -q "not configured — skipping" && ok "optional CI mode skips only an absent budget" || bad "optional CI mode skips only an absent budget" "$out"
+printf '{"locBudget":{"budget":10,"paths":[]}}\n' > "$R/.quality-kit.json"
+rc=0; err="$(bash "$LB" "$R" --if-configured 2>&1 >/dev/null)" || rc=$?
+[ "$rc" = 64 ] && echo "$err" | grep -q "no source paths configured" && ok "configured empty paths fail closed" || bad "configured empty paths fail closed" "rc=$rc err=$err"
+rc=0; err="$(LOC_PATHS='*.py' LOC_BUDGET='not-a-number' bash "$LB" "$R" --if-configured 2>&1 >/dev/null)" || rc=$?
+[ "$rc" = 64 ] && echo "$err" | grep -q "positive integer" && ok "malformed budget fails closed" || bad "malformed budget fails closed" "rc=$rc err=$err"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

@@ -200,7 +200,7 @@ fi
 # later regression and gives a future cohort one explicit number to advance.
 SHAPE_GATE_VERSION=1
 case "$PROFILE" in
-  python) SHAPE_RULES="C901,PLR1702" ;;
+  python) SHAPE_RULES="C901" ;;
   *)      SHAPE_RULES="complexity,max-depth,max-lines,max-lines-per-function" ;;
 esac
 CURRENT_SHAPE_VERSION="$(python3 -c "
