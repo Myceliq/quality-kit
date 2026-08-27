@@ -26,6 +26,12 @@ esac
 out="$("${cmd[@]}" 2>&1)"; status=$?
 [ "$status" -eq 0 ] && exit 0
 
+git_dir="$(git rev-parse --absolute-git-dir 2>/dev/null)"
+log="$git_dir/quality-kit/last-validate.log"
+mkdir -p "$(dirname "$log")"
+printf '%s\n' "$out" >"$log"
+echo "QUALITY_GATE status=fail gate=validate-fast exit=$status log=$log" >&2
+
 active="$(printf '%s' "$payload" | python3 -c "import json,sys
 try: print(json.load(sys.stdin).get('stop_hook_active',False))
 except Exception: print(False)" 2>/dev/null)"

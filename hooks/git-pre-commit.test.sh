@@ -10,7 +10,7 @@ ok()  { echo "PASS $1"; }
 bad() { echo "FAIL $1: $2"; fail=1; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/bin"; printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/codex"; chmod +x "$T/bin/codex"
+mkdir -p "$T/bin"; printf '#!/usr/bin/env bash\nexit "${CODEX_SHIM_EXIT:-0}"\n' > "$T/bin/codex"; chmod +x "$T/bin/codex"
 export PATH="$T/bin:$PATH"
 
 mk() { # $1=fail(0|1) → stamped fixture with make runner
@@ -27,6 +27,26 @@ R="$(mk 1)"; rc=0; (cd "$R" && echo x > f.txt && git add f.txt && bash "$HOOK" 2
 [ "$rc" != 0 ] && ok "stamped+red commit blocked" || bad "stamped+red commit blocked" "allowed"
 U="$(mktemp -d)"; (cd "$U" && git init -q && git config core.hooksPath /dev/null && echo x > f.txt && git add f.txt && bash "$HOOK") \
   && ok "unstamped repo unaffected" || bad "unstamped repo unaffected" "blocked"
+
+# Every fail-open Codex path emits one stable reason for CI/agent consumers.
+R="$(mk 0)"; (cd "$R" && echo x > f.txt && git add f.txt)
+out="$(cd "$R" && bash "$HOOK")"
+echo "$out" | grep -Fq 'GATE_SKIPPED reason=no_final_output' && ok "empty Codex output reports skip reason" || bad "empty Codex output reports skip reason" "$out"
+out="$(cd "$R" && CODEX_SHIM_EXIT=124 bash "$HOOK")"
+echo "$out" | grep -Fq 'GATE_SKIPPED reason=timeout' && ok "Codex timeout reports skip reason" || bad "Codex timeout reports skip reason" "$out"
+out="$(cd "$R" && CODEX_SHIM_EXIT=7 bash "$HOOK")"
+echo "$out" | grep -Fq 'GATE_SKIPPED reason=execution_failed' && ok "Codex failure reports skip reason" || bad "Codex failure reports skip reason" "$out"
+out="$(cd "$R" && CODEX_HOOK_MAX_DIFF_BYTES=0 bash "$HOOK")"
+echo "$out" | grep -Fq 'GATE_SKIPPED reason=diff_too_large' && ok "oversize diff reports skip reason" || bad "oversize diff reports skip reason" "$out"
+R="$(mk 0)"; (cd "$R" && mkdir -p docs/plans && echo x > docs/plans/p.md && git add docs/plans/p.md)
+out="$(cd "$R" && CODEX_HOOK_MAX_DIFF_BYTES=0 bash "$HOOK")"
+echo "$out" | grep -Fq 'GATE_SKIPPED reason=plan_diff_too_large' && ok "oversize plan reports skip reason" || bad "oversize plan reports skip reason" "$out"
+R="$(mk 0)"
+out="$(cd "$R" && bash "$HOOK")"
+echo "$out" | grep -Fq 'GATE_SKIPPED reason=no_staged_changes' && ok "empty stage reports skip reason" || bad "empty stage reports skip reason" "$out"
+R="$(mk 0)"; (cd "$R" && echo x > f.txt && git add f.txt)
+out="$(cd "$R" && PATH=/usr/bin:/bin bash "$HOOK")"
+echo "$out" | grep -Fq 'GATE_SKIPPED reason=codex_unavailable' && ok "missing Codex reports skip reason" || bad "missing Codex reports skip reason" "$out"
 
 # Regression: repo path containing a shell-metachar quote must not break runner
 # detection (a naive python3 -c "...'$PATH'..." interpolation breaks here and
