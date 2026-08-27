@@ -440,9 +440,9 @@ echo "$out" | grep -q "^3 tracked source lines" && ok "ts division before quoted
 
 
 
-# --- ts unterminated /* at EOF does not zero earlier code ---
-# an unterminated block comment at EOF leaves previous code counted (2 lines),
-# rather than crashing, failing closed on the whole file, or zeroing prior lines.
+# --- ts unterminated /* at EOF gives its swallowed lines back ---
+# a block comment still open at EOF is invalid source or a misread opener; either
+# way the lines it ate are unverifiable, so they are counted rather than skipped.
 R="$(mkrepo)"
 cat > "$R/unterminated.ts" <<'EOF'
 const a = 1;
@@ -452,9 +452,25 @@ line in unclosed comment
 EOF
 git -C "$R" add -A
 out="$(LOC_PATHS='*.ts' bash "$LB" "$R")"
-# lines 1-2 have valid code before the comment opener and must be counted (2);
-# unclosed comment at EOF does not crash or silently erase prior lines -> 2 counted lines
-echo "$out" | grep -q "^2 tracked source lines" && ok "ts unterminated /* at EOF preserves code count" || bad "ts unterminated /* at EOF preserves code count" "$out"
+# lines 1-2 are code (2); lines 3-4 were swallowed by a comment that never closed
+# and are handed back rather than silently erased -> 4 counted lines
+echo "$out" | grep -q "^4 tracked source lines" && ok "ts unterminated /* at EOF returns swallowed lines" || bad "ts unterminated /* at EOF returns swallowed lines" "$out"
+
+
+# --- tsx nested JSX in an attribute expression cannot hide the rest of the file ---
+# <span> inside child={...} is consumed as tag text, so its raw child text '/*'
+# opens a false block comment. Unclosed at EOF, that used to swallow every line
+# below it — an unbounded, silent undercount in a budget gate.
+R="$(mkrepo)"
+cat > "$R/nested.tsx" <<'EOF'
+const view = <Comp child={<span>/* literal text</span>} />;
+const a = 1;
+const b = 2;
+const c = 3;
+EOF
+git -C "$R" add -A
+out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
+echo "$out" | grep -q "^4 tracked source lines" && ok "tsx nested JSX in attr expr does not hide the file" || bad "tsx nested JSX in attr expr does not hide the file" "$out"
 
 
 # --- over budget: exit 1 ---

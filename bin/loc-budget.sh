@@ -138,10 +138,13 @@ def js_lines(lines, is_jsx=False):
     do not open false block comments while division operands followed by quoted
     strings with /* stay in division mode; JSX raw child text containing /* is
     counted as payload when is_jsx is True without mistaking TS generics for JSX;
+    a block comment left open at EOF gives its swallowed lines back, so a
+    misread opener cannot silently erase the rest of a file;
     when the parser cannot be sure it counts the line, never skips it (the safe
     direction, never undercounts)."""
     counted = 0
     in_comment = False
+    swallowed = 0
     in_single_quote, in_double_quote = False, False
     template_stack = []
     prev_char = None
@@ -165,6 +168,7 @@ def js_lines(lines, is_jsx=False):
             if in_comment:
                 if line.startswith("*/", i):
                     in_comment = False
+                    swallowed = 0
                     i += 2
                 else:
                     i += 1
@@ -533,6 +537,14 @@ def js_lines(lines, is_jsx=False):
 
         if has_code:
             counted += 1
+        elif in_comment:
+            swallowed += 1
+    # A block comment still open at EOF is either invalid source or a parser
+    # mistake — a JSX construct the tag scanner misread as a comment opener.
+    # Either way the lines it ate are unverifiable, so count them rather than
+    # let an unbounded stretch of real source vanish from the budget.
+    if in_comment:
+        counted += swallowed
     return counted
 
 
