@@ -10,6 +10,7 @@ bad() { echo "FAIL $1: $2"; fail=1; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/src" "$T/node_modules/pkg" "$T/docs"
+git -C "$T" init -q
 cat > "$T/src/a.ts" <<'EOF'
 // oxlint-disable-next-line no-explicit-any
 const x: any = 1;
@@ -19,18 +20,35 @@ const y = x.q;
 const z = y;
 EOF
 printf 'v = 1  # noqa: E501\nw = 2  # type: ignore\n' > "$T/src/b.py"
-printf '// oxlint-disable everything\n' > "$T/node_modules/pkg/c.ts"   # must NOT count
+printf '// oxlint-disable everything\n' > "$T/node_modules/pkg/c.ts"   # untracked: must NOT count
 printf '// @ts-expect-error\nexport {};\n' > "$T/src/c.mts"
+git -C "$T" add src
 
 out="$(bash "$DIR/count-suppressions.sh" "$T")"
-python3 -c "
-import json,sys
-d=json.loads('''$out''')
-assert d=={'oxlint-disable':1,'ts-expect-error':2,'ts-ignore':1,'noqa':1,'type-ignore':1}, d
-" && ok "counts + vendored exclusion" || bad "counts + vendored exclusion" "$out"
+expected='{"oxlint-disable":1,"ts-expect-error":2,"ts-ignore":1,"noqa":1,"type-ignore":1}'
+[ "$out" = "$expected" ] \
+  && ok "counts tracked files with exact JSON contract" || bad "counts tracked files with exact JSON contract" "$out"
 
-out2="$(bash "$DIR/count-suppressions.sh" "$(mktemp -d)")"
+mkdir -p "$T/.claude/worktrees"
+git -C "$T" -c core.hooksPath=/dev/null -c user.name=test -c user.email=test@example.com commit -qm fixture
+git -C "$T" worktree add -q "$T/.claude/worktrees/copy" -b nested-copy
+out_nested="$(bash "$DIR/count-suppressions.sh" "$T")"
+[ "$out_nested" = "$out" ] \
+  && ok "nested checkout is not counted" || bad "nested checkout is not counted" "$out_nested"
+
+EMPTY="$(mktemp -d)"
+git -C "$EMPTY" init -q
+out2="$(bash "$DIR/count-suppressions.sh" "$EMPTY")"
 [ "$out2" = '{"oxlint-disable":0,"ts-expect-error":0,"ts-ignore":0,"noqa":0,"type-ignore":0}' ] \
   && ok "empty repo all zeros" || bad "empty repo all zeros" "$out2"
+
+NOT_GIT="$(mktemp -d)"
+if err="$(bash "$DIR/count-suppressions.sh" "$NOT_GIT" 2>&1)"; then
+  bad "outside git repo fails" "unexpected success: $err"
+elif [[ "$err" == *"cannot enumerate tracked files"* ]]; then
+  ok "outside git repo fails"
+else
+  bad "outside git repo fails" "$err"
+fi
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
