@@ -114,29 +114,437 @@ def sh_lines(lines):
     return counted
 
 
-def js_lines(lines):
+# Keywords and characters that allow a regex literal in JS/TS
+REGEX_KEYWORDS = {"return", "case", "throw", "yield", "await", "typeof",
+                  "void", "delete", "default", "do", "else", "in",
+                  "instanceof", "of", "new"}
+REGEX_CHARS = {
+    "=", "(", ":", "[", "{", "}", ";", ",",
+    "!", "&", "|", "^", "~", "?", "<", ">",
+    "+", "-", "*", "%", "/", "\\", "..."
+}
+CONTROL_KEYWORDS = {"if", "while", "for", "with"}
+
+
+def js_lines(lines, is_jsx=False):
     """What: counted lines of JS/TS(X). Where: the .js/.ts/.tsx/.jsx branch of
-    count(). Why: '//' inside a template literal is payload, so backtick
-    parity decides whether a line is comment or content.
-    ponytail: parity ignores quoted strings and /* */ blocks, so a backtick in
-    a quoted string, or a commented-out block, over-counts — the safe way.
-    Sharing this counter for ts/tsx/jsx (not just js) is the same tradeoff: a
-    JSX `{/* */}` comment isn't special-cased, so it counts as code — safe
-    direction, never undercounts."""
-    counted, in_template = 0, False
+    count(). Why: comments (both '//' and '/* */' blocks) and blank lines are
+    free, while template literal bodies and strings are counted payload.
+    Block-comment state composes with template literal and quote tracking so
+    '/*' inside strings or backtick payloads does not open a comment, while
+    comments inside template interpolations ${...} remain free.
+    ponytail: regex literals containing /* or // are scanned when preceded by
+    an operator, keyword, or control statement so character classes like /[/*]/
+    do not open false block comments while division operands followed by quoted
+    strings with /* stay in division mode; JSX raw child text containing /* is
+    counted as payload when is_jsx is True without mistaking TS generics for JSX;
+    a block comment left open at EOF gives its swallowed lines back, so a
+    misread opener cannot silently erase the rest of a file;
+    when the parser cannot be sure it counts the line, never skips it (the safe
+    direction, never undercounts)."""
+    counted = 0
+    in_comment = False
+    swallowed = 0
+    in_single_quote, in_double_quote = False, False
+    template_stack = []
+    prev_char = None
+    last_word = ""
+    in_word = False
+    control_paren_depth = 0
+    after_control_paren = False
+    jsx_depth = 0
+    in_jsx_tag = False
+    tag_bracket_depth = 0
+    is_closing_tag = False
+    is_self_closing = False
+    is_generic_tag = False
+    jsx_expr_depth = 0
+
     for line in lines:
-        stripped = line.strip()
-        if in_template or (stripped and not stripped.startswith("//")):
-            counted += 1
+        in_template_payload = (len(template_stack) > 0 and template_stack[-1] == 0)
+        has_code = in_template_payload or in_single_quote or in_double_quote
         i = 0
         while i < len(line):
-            if line[i] == "\\":
-                i += 1
-            elif line[i] == "`":
-                in_template = not in_template
-            elif not in_template and line.startswith("//", i):
-                break
-            i += 1
+            if in_comment:
+                if line.startswith("*/", i):
+                    in_comment = False
+                    swallowed = 0
+                    i += 2
+                else:
+                    i += 1
+            elif in_template_payload:
+                if line[i] == "\\":
+                    i += 2
+                elif line.startswith("${", i):
+                    template_stack[-1] = 1
+                    in_template_payload = False
+                    has_code = True
+                    prev_char = "{"
+                    last_word = ""
+                    in_word = False
+                    i += 2
+                elif line[i] == "`":
+                    template_stack.pop()
+                    in_template_payload = (len(template_stack) > 0 and template_stack[-1] == 0)
+                    has_code = True
+                    prev_char = "`"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                else:
+                    has_code = True
+                    i += 1
+            elif in_double_quote:
+                if line[i] == "\\":
+                    i += 2
+                elif line[i] == '"':
+                    in_double_quote = False
+                    prev_char = '"'
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                else:
+                    i += 1
+            elif in_single_quote:
+                if line[i] == "\\":
+                    i += 2
+                elif line[i] == "'":
+                    in_single_quote = False
+                    prev_char = "'"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                else:
+                    i += 1
+            elif is_jsx and jsx_depth > 0 and jsx_expr_depth == 0 and not in_jsx_tag:
+                if line[i] == "{":
+                    has_code = True
+                    jsx_expr_depth += 1
+                    prev_char = "{"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif line[i] == "<":
+                    has_code = True
+                    in_jsx_tag = True
+                    tag_bracket_depth = 1
+                    is_closing_tag = (i + 1 < len(line) and line[i + 1] == "/")
+                    is_self_closing = False
+                    is_generic_tag = False
+                    prev_char = "<"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                else:
+                    if not line[i].isspace():
+                        has_code = True
+                        prev_char = line[i]
+                    i += 1
+            elif is_jsx and in_jsx_tag:
+                if line.startswith("/*", i):
+                    in_comment = True
+                    i += 2
+                elif line.startswith("//", i):
+                    break
+                elif line[i] == '"':
+                    has_code = True
+                    in_double_quote = True
+                    prev_char = '"'
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif line[i] == "'":
+                    has_code = True
+                    in_single_quote = True
+                    prev_char = "'"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif line[i] == "`" and jsx_expr_depth > 0:
+                    has_code = True
+                    template_stack.append(0)
+                    in_template_payload = True
+                    prev_char = "`"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif line[i] == "{":
+                    has_code = True
+                    jsx_expr_depth += 1
+                    prev_char = "{"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif line[i] == "}":
+                    has_code = True
+                    if jsx_expr_depth > 0:
+                        jsx_expr_depth -= 1
+                    prev_char = "}"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif line[i] == "<" and jsx_expr_depth == 0:
+                    has_code = True
+                    tag_bracket_depth += 1
+                    prev_char = "<"
+                    i += 1
+                elif line[i] == "," and jsx_expr_depth == 0 and tag_bracket_depth == 1:
+                    has_code = True
+                    is_generic_tag = True
+                    prev_char = ","
+                    i += 1
+                elif line[i] == "=" and jsx_expr_depth == 0 and tag_bracket_depth == 1:
+                    has_code = True
+                    j = i + 1
+                    while j < len(line) and line[j].isspace():
+                        j += 1
+                    if j < len(line) and line[j] not in ('"', "'", "{"):
+                        is_generic_tag = True
+                    prev_char = "="
+                    i += 1
+                elif jsx_expr_depth > 0 and line[i] == "/" and not line.startswith("/*", i) and not line.startswith("//", i) and (prev_char is None or prev_char in REGEX_CHARS or last_word in REGEX_KEYWORDS):
+                    # Regex literal inside JSX attribute expression e.g. pattern={/[/*]/}
+                    has_code = True
+                    j = i + 1
+                    in_cc = False
+                    is_regex = False
+                    while j < len(line):
+                        if line[j] == "\\":
+                            j += 2
+                        elif line[j] == "[" and not in_cc:
+                            in_cc = True
+                            j += 1
+                        elif line[j] == "]" and in_cc:
+                            in_cc = False
+                            j += 1
+                        elif line[j] == "/" and not in_cc:
+                            j += 1
+                            while j < len(line) and line[j].isalpha():
+                                j += 1
+                            i = j
+                            is_regex = True
+                            prev_char = "/regex"
+                            last_word = ""
+                            in_word = False
+                            break
+                        else:
+                            j += 1
+                    if not is_regex:
+                        prev_char = "/"
+                        last_word = ""
+                        in_word = False
+                        i += 1
+                elif line[i] == "/":
+                    has_code = True
+                    if i + 1 < len(line) and line[i + 1] == ">" and jsx_expr_depth == 0:
+                        is_self_closing = True
+                    prev_char = "/"
+                    i += 1
+                elif line[i] == ">" and jsx_expr_depth == 0:
+                    has_code = True
+                    tag_bracket_depth -= 1
+                    if tag_bracket_depth <= 0:
+                        in_jsx_tag = False
+                        tag_bracket_depth = 0
+                        j = i + 1
+                        while j < len(line) and line[j].isspace():
+                            j += 1
+                        if j < len(line) and line[j] == "(":
+                            is_generic_tag = True
+                        if is_generic_tag:
+                            is_generic_tag = False
+                        elif is_closing_tag:
+                            jsx_depth = max(0, jsx_depth - 1)
+                        elif not is_self_closing:
+                            jsx_depth += 1
+                    prev_char = ">"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                else:
+                    c = line[i]
+                    if not c.isspace():
+                        has_code = True
+                        prev_char = c
+                        if c.isalnum() or c in "_$":
+                            if not in_word:
+                                last_word = c
+                                in_word = True
+                            else:
+                                last_word += c
+                            if last_word == "extends" and jsx_expr_depth == 0 and tag_bracket_depth == 1:
+                                is_generic_tag = True
+                        else:
+                            in_word = False
+                            last_word = ""
+                    else:
+                        in_word = False
+                    i += 1
+            else:
+                if line.startswith("/*", i):
+                    in_comment = True
+                    i += 2
+                elif line.startswith("//", i):
+                    break
+                elif line[i] == '"':
+                    has_code = True
+                    in_double_quote = True
+                    prev_char = '"'
+                    last_word = ""
+                    in_word = False
+                    after_control_paren = False
+                    i += 1
+                elif line[i] == "'":
+                    has_code = True
+                    in_single_quote = True
+                    prev_char = "'"
+                    last_word = ""
+                    in_word = False
+                    after_control_paren = False
+                    i += 1
+                elif line[i] == "`":
+                    has_code = True
+                    template_stack.append(0)
+                    in_template_payload = True
+                    prev_char = "`"
+                    last_word = ""
+                    in_word = False
+                    after_control_paren = False
+                    i += 1
+                elif len(template_stack) > 0 and template_stack[-1] > 0 and line[i] == "{":
+                    template_stack[-1] += 1
+                    has_code = True
+                    prev_char = "{"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif len(template_stack) > 0 and template_stack[-1] > 0 and line[i] == "}":
+                    template_stack[-1] -= 1
+                    in_template_payload = (template_stack[-1] == 0)
+                    has_code = True
+                    prev_char = "}"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif is_jsx and line[i] == "{" and jsx_depth > 0:
+                    has_code = True
+                    jsx_expr_depth += 1
+                    prev_char = "{"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif is_jsx and line[i] == "}" and jsx_expr_depth > 0:
+                    has_code = True
+                    jsx_expr_depth -= 1
+                    prev_char = "}"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif is_jsx and line[i] == "<" and (i + 1 < len(line) and (line[i + 1].isalpha() or line[i + 1] in "_$>/")) and (prev_char is None or prev_char in REGEX_CHARS or last_word in REGEX_KEYWORDS or after_control_paren or jsx_depth > 0):
+                    has_code = True
+                    in_jsx_tag = True
+                    tag_bracket_depth = 1
+                    is_closing_tag = (i + 1 < len(line) and line[i + 1] == "/")
+                    is_self_closing = False
+                    is_generic_tag = False
+                    prev_char = "<"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif line[i] == "/" and not line.startswith("/*", i) and not line.startswith("//", i) and (prev_char is None or
+                                         prev_char in REGEX_CHARS or
+                                         last_word in REGEX_KEYWORDS or
+                                         after_control_paren):
+                    has_code = True
+                    after_control_paren = False
+                    j = i + 1
+                    in_cc = False
+                    is_regex = False
+                    while j < len(line):
+                        if line[j] == "\\":
+                            j += 2
+                        elif line[j] == "[" and not in_cc:
+                            in_cc = True
+                            j += 1
+                        elif line[j] == "]" and in_cc:
+                            in_cc = False
+                            j += 1
+                        elif line[j] == "/" and not in_cc:
+                            j += 1
+                            while j < len(line) and line[j].isalpha():
+                                j += 1
+                            i = j
+                            is_regex = True
+                            prev_char = "/regex"
+                            last_word = ""
+                            in_word = False
+                            break
+                        else:
+                            j += 1
+                    if not is_regex:
+                        prev_char = "/"
+                        last_word = ""
+                        in_word = False
+                        i += 1
+                else:
+                    c = line[i]
+                    if c.isspace():
+                        in_word = False
+                    else:
+                        has_code = True
+                        if c == "." and prev_char == ".":
+                            prev_char = ".."
+                        elif c == "." and prev_char == "..":
+                            prev_char = "..."
+                        elif c == "+" and prev_char == "+":
+                            prev_char = "++"
+                        elif c == "-" and prev_char == "-":
+                            prev_char = "--"
+                        else:
+                            prev_char = c
+                        if c.isalnum() or c in "_$":
+                            after_control_paren = False
+                            if not in_word:
+                                last_word = c
+                                in_word = True
+                            else:
+                                last_word += c
+                        else:
+                            in_word = False
+                            if c == "(":
+                                if last_word in CONTROL_KEYWORDS:
+                                    control_paren_depth = 1
+                                elif control_paren_depth > 0:
+                                    control_paren_depth += 1
+                                after_control_paren = False
+                            elif c == ")":
+                                if control_paren_depth > 0:
+                                    control_paren_depth -= 1
+                                    if control_paren_depth == 0:
+                                        after_control_paren = True
+                                else:
+                                    after_control_paren = False
+                            else:
+                                after_control_paren = False
+                            last_word = ""
+                    i += 1
+
+        # Reset quote state at end of line unless continued with trailing backslash
+        if in_double_quote and (len(line) - len(line.rstrip("\\"))) % 2 == 0:
+            in_double_quote = False
+        if in_single_quote and (len(line) - len(line.rstrip("\\"))) % 2 == 0:
+            in_single_quote = False
+
+        if has_code:
+            counted += 1
+        elif in_comment:
+            swallowed += 1
+    # A block comment still open at EOF is either invalid source or a parser
+    # mistake — a JSX construct the tag scanner misread as a comment opener.
+    # Either way the lines it ate are unverifiable, so count them rather than
+    # let an unbounded stretch of real source vanish from the budget.
+    if in_comment:
+        counted += swallowed
     return counted
 
 
@@ -148,8 +556,9 @@ def count(path, src):
         return len(src.splitlines())
     if ext == "py":
         return py_lines(src)
-    return {"sh": sh_lines, "js": js_lines, "ts": js_lines, "tsx": js_lines,
-            "jsx": js_lines}[ext](src.splitlines())
+    return {"sh": sh_lines, "js": js_lines, "ts": js_lines,
+            "tsx": lambda lines: js_lines(lines, is_jsx=True),
+            "jsx": lambda lines: js_lines(lines, is_jsx=True)}[ext](src.splitlines())
 
 
 def printable(path):
