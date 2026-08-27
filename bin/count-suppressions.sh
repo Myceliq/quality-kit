@@ -6,15 +6,19 @@
 set -euo pipefail
 REPO="${1:?usage: count-suppressions.sh <repo>}"
 
-# Enumerate via `git ls-files`, matching loc-budget.sh's approach, not `grep
-# -r .` with a hardcoded --exclude-dir list: a fixed list can't know about a
-# nested checkout (an agent worktree under .claude/worktrees/, say), so `grep
-# -r` walks into it and counts its suppressions again, once per nested copy.
-# `git ls-files` only returns files THIS repo's index tracks, so a nested
-# checkout's own files — tracked only in its own, separate index — never
-# enter the list. A failed enumeration is a loud exit, not a silent zero — a
+# Enumerate via `git ls-files --cached --others --exclude-standard`, matching
+# loc-budget.sh's approach, not `grep -r .` with a hardcoded --exclude-dir
+# list: a fixed list can't know about a nested checkout (an agent worktree
+# under .claude/worktrees/, say), so `grep -r` walks into it and counts its
+# suppressions again, once per nested copy. --exclude-standard is what keeps
+# that checkout out here — it honours .gitignore, and a worktree dir is
+# gitignored precisely so the parent repo never touches it. --cached alone
+# would do that too, but would also silently drop any real file that's been
+# written but not yet `git add`ed — --others restores that on-disk file, so
+# only gitignored (or literally absent) paths are excluded, not merely
+# unstaged ones. A failed enumeration is a loud exit, not a silent zero — a
 # counter that undercounts is exactly the miss this gate exists to catch.
-if ! git -C "$REPO" ls-files -z >/dev/null; then
+if ! git -C "$REPO" ls-files -z --cached --others --exclude-standard >/dev/null; then
   echo "cannot enumerate tracked files: git ls-files failed here" >&2
   exit 1
 fi
@@ -29,7 +33,7 @@ cnt() {
   local pattern="$1"; shift
   # `git ls-files` prints paths relative to the repo root, so grep must run
   # from there too, or a relative match against the caller's cwd finds nothing.
-  (cd "$REPO" && git ls-files -z -- "$@" \
+  (cd "$REPO" && git ls-files -z --cached --others --exclude-standard -- "$@" \
     | xargs -0 -r grep -o -E "$pattern" -- 2>/dev/null \
     | wc -l | tr -d ' ') || true
 }

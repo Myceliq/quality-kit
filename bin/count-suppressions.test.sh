@@ -11,6 +11,7 @@ bad() { echo "FAIL $1: $2"; fail=1; }
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/src" "$T/node_modules/pkg" "$T/docs"
 git -C "$T" init -q
+printf 'node_modules/\n' > "$T/.gitignore"
 cat > "$T/src/a.ts" <<'EOF'
 // oxlint-disable-next-line no-explicit-any
 const x: any = 1;
@@ -20,14 +21,15 @@ const y = x.q;
 const z = y;
 EOF
 printf 'v = 1  # noqa: E501\nw = 2  # type: ignore\n' > "$T/src/b.py"
-printf '// oxlint-disable everything\n' > "$T/node_modules/pkg/c.ts"   # untracked: must NOT count
+printf '// oxlint-disable everything\n' > "$T/node_modules/pkg/c.ts"   # gitignored: must NOT count
 printf '// @ts-expect-error\nexport {};\n' > "$T/src/c.mts"
-git -C "$T" add src
+printf '// @ts-ignore\nconst w = 1;\n' > "$T/src/untracked.ts"        # written but never `git add`ed: must still count
+git -C "$T" add src/a.ts src/b.py src/c.mts .gitignore   # src/untracked.ts deliberately left unstaged
 
 out="$(bash "$DIR/count-suppressions.sh" "$T")"
-expected='{"oxlint-disable":1,"ts-expect-error":2,"ts-ignore":1,"noqa":1,"type-ignore":1}'
+expected='{"oxlint-disable":1,"ts-expect-error":2,"ts-ignore":2,"noqa":1,"type-ignore":1}'
 [ "$out" = "$expected" ] \
-  && ok "counts tracked files with exact JSON contract" || bad "counts tracked files with exact JSON contract" "$out"
+  && ok "counts tracked + untracked-but-real files, gitignored dir excluded" || bad "counts tracked + untracked-but-real files, gitignored dir excluded" "$out"
 
 mkdir -p "$T/.claude/worktrees"
 git -C "$T" -c core.hooksPath=/dev/null -c user.name=test -c user.email=test@example.com commit -qm fixture
