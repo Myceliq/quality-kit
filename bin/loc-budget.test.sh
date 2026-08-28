@@ -494,4 +494,31 @@ git -C "$R" add -A
 rc=0; err="$(bash "$LB" "$R" 2>&1 >/dev/null)" || rc=$?
 [ "$rc" = 64 ] && echo "$err" | grep -q "no source paths configured" && ok "unconfigured paths refuses loudly" || bad "unconfigured paths refuses loudly" "rc=$rc err=$err"
 
+# --- FACTORY_GATE short-circuits before any measurement (#15) ---
+# The factory's gate mounts a content snapshot with no .git, so `git ls-files` fails
+# and the budget cannot be measured there. Without the skip this exits 1 and a
+# fail-closed gate deadlocks the repo. Two properties, not one: that it skips, AND
+# that it emits no summary line — consumers parse that line, and a number nothing
+# measured is worse than no number.
+R="$(mkrepo)"
+printf 'x = 1\n' > "$R/a.py"
+git -C "$R" add -A
+rm -r "$R/.git"   # what the gate's snapshot looks like: content, no history
+rc=0; out="$(LOC_PATHS='*.py' FACTORY_GATE=1 bash "$LB" "$R" 2>&1)" || rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "unmeasurable in gate" \
+  && ! echo "$out" | grep -q "tracked source lines" \
+  && ok "FACTORY_GATE skips before measuring, and prints no summary line" \
+  || bad "FACTORY_GATE skip" "rc=$rc out=$out"
+
+# --- gate-ness is never INFERRED from git failing (#15) ---
+# The same unmeasurable tree without the flag must still refuse. If a broken git
+# implied "in a gate", any broken git anywhere would silently disarm the budget.
+R="$(mkrepo)"
+printf 'x = 1\n' > "$R/a.py"
+git -C "$R" add -A
+rm -r "$R/.git"
+rc=0; out="$(LOC_PATHS='*.py' bash "$LB" "$R" 2>&1)" || rc=$?
+[ "$rc" != 0 ] && ok "an unmeasurable tree without the flag still refuses" \
+  || bad "no-flag refusal" "passed without FACTORY_GATE: out=$out"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
