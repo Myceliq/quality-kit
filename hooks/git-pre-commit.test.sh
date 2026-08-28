@@ -163,6 +163,15 @@ LGTM'
 check "a backticked marker outside any fence is still not a finding" clean \
   'this gate blocks on every `[P1]` substring'
 
+# A four-backtick fence may legally contain a literal three-backtick run. Treating that shorter
+# run as a boundary flipped the parser to "outside", where the inline strip removed the marker.
+check "a shorter run inside a longer fence does not end it" block \
+  '````
+```
+see `[P1]` here
+````
+LGTM'
+
 check "real finding outside a fenced block still blocks" block \
 '```
 context: existing code shown for reference
