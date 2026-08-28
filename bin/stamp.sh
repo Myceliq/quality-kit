@@ -18,6 +18,78 @@ case "$PROFILE" in nextjs|vite|node|python) ;; *) echo "unknown profile: $PROFIL
 REPO="$(cd "$REPO" && pwd)"
 VERSION="$(cat "$KIT/VERSION")"
 
+# --- refuse a package manager this kit cannot generate working CI for (#7) ---
+# What:  on TS profiles, detect the manager and stamp only npm.
+# Where: before ANY file is written, so a refusal leaves no half-stamped repo.
+# Why:   ts/quality.yml hardcodes `npm ci` and a `cache: 'npm'` key, and
+#        check-drift's next floor reads package-lock.json and fails CLOSED without
+#        one. Stamping a pnpm repo therefore SUCCEEDS, prints "stamped", and hands
+#        back CI that cannot install plus a drift gate permanently red on a file the
+#        repo will never have. An unsupported manager must not be able to produce a
+#        green stamp.
+#
+#        Detection is from the LOCKFILE, because that is what CI installs and it is
+#        the ground truth everywhere else in this kit. A declared `packageManager`
+#        counts too — it is positive evidence even before a lockfile is committed.
+#        Disagreement between them is ambiguous and refused rather than resolved:
+#        guessing is how a repo gets CI for a manager it does not use.
+#
+#        No signal at all is deliberately NOT refused. Stamping before the first
+#        install reconcile is an existing, working flow (README, "known gotchas"),
+#        and refusing it would break re-stamps for the repos already on the kit.
+#        This narrows the hole; full pnpm support is #7 proper.
+#
+#        python3 is a hard precondition, stated here rather than assumed. It was
+#        always one — the manifest/package.json merges below are a python3 heredoc —
+#        but only implicitly, so a box without it got a half-stamped repo and a crash
+#        partway through. Detection must not be the one step that degrades quietly:
+#        swallowing a missing interpreter would turn a declared pnpm repo back into a
+#        silent npm stamp, which is the exact failure this guard exists to stop.
+command -v python3 >/dev/null 2>&1 || {
+  echo "python3 is required by stamp.sh (package-manager detection and the package.json merges)" >&2
+  exit 78
+}
+
+if [ "$PROFILE" != python ]; then
+  DETECTED="$(
+    cd "$REPO"
+    [ -f package-lock.json ] && echo npm
+    [ -f pnpm-lock.yaml ]    && echo pnpm
+    [ -f yarn.lock ]         && echo yarn
+    { [ -f bun.lockb ] || [ -f bun.lock ]; } && echo bun
+    if [ -f package.json ]; then
+      python3 -c "
+import json, re, sys
+try:
+    pm = json.load(open('package.json')).get('packageManager')
+except Exception:
+    sys.exit(0)
+if isinstance(pm, str):
+    m = re.match(r'([a-z]+)', pm.strip())
+    if m and m.group(1) in ('npm', 'pnpm', 'yarn', 'bun'):
+        print(m.group(1))
+"
+    fi
+    true
+  )"
+  # xargs rather than grep -v + tr: `pipefail` is on, and a grep that matches nothing
+  # exits 1, which under `set -e` aborts the stamp on exactly the common case — a repo
+  # with no signals at all. xargs collapses the blanks and cannot fail on empty input.
+  DETECTED="$(printf '%s\n' "$DETECTED" | sort -u | xargs)"
+  case "$DETECTED" in
+    ""|"npm") ;;
+    *)
+      echo "unsupported package manager: detected [$DETECTED]" >&2
+      echo "This kit stamps npm only. .github/workflows/quality.yml runs 'npm ci' and" >&2
+      echo "check-drift.sh verifies the next floor from package-lock.json, so stamping" >&2
+      echo "this repo would produce CI that cannot install and a drift gate that is" >&2
+      echo "permanently red on a file the repo will never have." >&2
+      echo "Refusing rather than shipping broken CI. Tracking: Myceliq/quality-kit#7." >&2
+      exit 78
+      ;;
+  esac
+fi
+
 # refuse to clobber locally-modified stamped files unless --force
 # Scope: the manifest guards BYTE-OWNED files only. Merged files
 # (package.json, tsconfig.json, AGENTS.md, .claude/settings.json) are
