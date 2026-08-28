@@ -1,6 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# --- Knobs: REVIEW_HOOK_* with a CODEX_HOOK_* fallback -----------------------
+# What:  read each knob under its new REVIEW_HOOK_ name, then the legacy CODEX_HOOK_ name,
+#        then the default; say so once when the legacy name supplied the value.
+# Why:   the same hook exists downstream with more than one review provider, where a name
+#        hard-coding "codex" is simply wrong. Two copies of one hook drifting to two different
+#        variable names is how a stamped fleet ends up needing two migrations, so the kit takes
+#        the same names — and, more importantly, the same fallback, so nothing already set under
+#        the old name stops taking effect on the day a repo upgrades.
+review_hook_knob() {
+  local suffix="$1" default="$2"
+  local new="REVIEW_HOOK_${suffix}" old="CODEX_HOOK_${suffix}"
+  if [ -n "${!new:-}" ]; then
+    printf '%s' "${!new}"
+  elif [ -n "${!old:-}" ]; then
+    echo "[codex-hook] ${old} is deprecated — rename it to ${new}." >&2
+    printf '%s' "${!old}"
+  else
+    printf '%s' "$default"
+  fi
+}
+
+# A numeric knob reaches $(( )) and [ -gt ], and set -e is active: TIMEOUT_SECONDS=180s would be
+# a fatal arithmetic error, so the hook exits non-zero and git aborts the commit. A typo in one
+# knob must not become a commit freeze across every stamped repo — fall back and say so.
+review_hook_int_knob() {
+  local value
+  value=$(review_hook_knob "$1" "$2")
+  case "$value" in
+    ''|*[!0-9]*)
+      echo "[codex-hook] ${1}='${value}' is not a non-negative integer — using ${2}." >&2
+      printf '%s' "$2"
+      ;;
+    *) printf '%s' "$value" ;;
+  esac
+}
+
 # Classify a Codex review into a gate decision. Reads the review on stdin, echoes
 # one of: block | drift | lgtm | clean. Split out from the gate below so it can be
 # exercised directly — see hooks/git-pre-commit.test.sh. Every bug this function
@@ -43,24 +79,38 @@ codex_verdict() {
   if printf '%s' "$scan" | grep -qE 'P[0-9]([[:space:]]*[:.)]|[[:space:]]+-[[:space:]])'; then echo drift; return; fi
   # An approval must be the review's own verdict, at the start of a line.
   if printf '%s' "$out" | grep -qE '^[[:space:]]*(#{1,6}[[:space:]]*|[-*][[:space:]]*)?LGTM\b'; then echo lgtm; return; fi
-  # No markers at all is a genuine clean review, NOT a parse failure: `codex exec
-  # review` imposes its own output schema and ignores appended format demands —
-  # verified, an added "end with VERDICT: CLEAN|ISSUES" instruction was never once
-  # echoed. Requiring a positive approval token would therefore alarm on EVERY
-  # clean commit, and an alarm that cries wolf every time is how the real one gets
-  # ignored. Do not "harden" this into an inconclusive state without re-checking
-  # what Codex actually emits on a clean diff.
+  # No markers at all is treated as a genuine clean review, NOT a parse failure.
+  #
+  # The original reason for that was: `codex exec review` imposes its own output schema and
+  # ignores appended format demands — an added "end with VERDICT: CLEAN|ISSUES" instruction was
+  # never once echoed — so requiring a positive approval token would alarm on EVERY clean commit,
+  # and an alarm that cries wolf every time is how the real one gets ignored.
+  #
+  # RE-CHECKED 2026-08-28 and that premise no longer holds: on gpt-5.6-terra at medium effort,
+  # codex honoured an explicit verdict-line instruction on the first try, in both directions
+  # ("VERDICT: LGTM" on a clean diff, "[P1] … VERDICT: CHANGES_REQUIRED" on a shell-injection
+  # one). The original finding was against this hook's own default, gpt-5.4-mini at low effort.
+  # So this is now a MODEL-DEPENDENT assumption, not a property of codex.
+  #
+  # The behaviour is deliberately left as-is anyway: requiring the token here would make the
+  # verdict contract load-bearing for every stamped repo on whatever model it happens to run,
+  # and a repo pinned to a weaker model would have every clean commit reported inconclusive.
+  # Requiring it is a change to make WITH the model floor, not before it. Re-measure before
+  # hardening — and re-measure per model, not once.
   echo clean
 }
 
 # Sourced by the test suite to reach codex_verdict() without running the gate.
-if [ -n "${CODEX_HOOK_LIB_ONLY:-}" ]; then return 0 2>/dev/null || exit 0; fi
+if [ -n "$(review_hook_knob LIB_ONLY '')" ]; then return 0 2>/dev/null || exit 0; fi
 
 # --- Dependency justification check (advisory; set DEP_JUSTIFICATION_ENFORCE=1 to hard-block) ---
 # Runs before the Codex review so dep-related issues surface early.
 # Honors bypass tokens "deps:noop|cleanup|reorder" in the commit body.
-if [ -x "$HOME/.config/git/hooks/dep-justification-check.sh" ]; then
-  "$HOME/.config/git/hooks/dep-justification-check.sh" || true
+# ${HOME:-} rather than $HOME: `set -u` makes a bare expansion abort the whole hook where HOME is
+# unset (a minimal CI image, a sanitized git environment), so an optional advisory check would
+# take every commit down with it.
+if [ -x "${HOME:-}/.config/git/hooks/dep-justification-check.sh" ]; then
+  "${HOME:-}/.config/git/hooks/dep-justification-check.sh" || true
 fi
 
 # --- quality-kit validate:fast (generic; replaces per-repo hacks) ---
@@ -94,9 +144,82 @@ fi
 # In interactive mode: prompts user. In non-interactive (Claude Code): blocks with structured output.
 # Bypass with: git commit --no-verify
 
+# Reason the review gate did not run, set by every skip path; consumed by gate_skipped.
+SKIP_REASON="unknown"
+
+# What:  classify a skip as "the review was unavailable" vs "this diff is not reviewable".
+# Why:   the two want different answers. A provider failure is an outage — retrying later works,
+#        and it is the case a strict caller wants to block on. A structural skip means the diff
+#        cannot be reviewed in the form it is in; no retry and no second provider rescues it, so
+#        blocking it wedges legitimate work with no way out. Recorded now so the choice of a
+#        default can be made from counts rather than from argument.
+skip_reason_class() {
+  case "$1" in
+    oversize_diff|oversize_plan_diff|plan_doc_advisory) printf 'structural' ;;
+    *)                                                  printf 'provider_failure' ;;
+  esac
+}
+
+# The strict switch travels with the stamp, not just the environment: a repo that must not
+# accept ungated commits should keep saying so after a fresh clone, a new machine, or a CI
+# runner that never sourced anyone's shell profile. An explicit env var still wins, so a
+# one-off `REVIEW_HOOK_REQUIRE_GATE=0 git commit` remains possible.
+require_gate_from_stamp() {
+  [ -n "${QK_ROOT:-}" ] && [ -f "$QK_ROOT/.quality-kit.json" ] || { printf '0'; return; }
+  python3 -c "import json,sys;print('1' if json.load(open(sys.argv[1])).get('requireGate') else '0')" \
+    "$QK_ROOT/.quality-kit.json" 2>/dev/null || printf '0'
+}
+
+REVIEW_HOOK_REQUIRE_GATE=$(review_hook_knob REQUIRE_GATE "$(require_gate_from_stamp)")
+
+# What:  emit the machine-readable gate verdict, and honour REVIEW_HOOK_REQUIRE_GATE.
+# Where: EVERY path that reaches a commit without a completed review.
+# Why:   without this line nothing downstream can tell "reviewed, clean" from "never ran". The
+#        failure that motivated it was a sandbox that could not initialise — not a blip but a
+#        property of the environment, so it recurs on every commit while the gate goes on looking
+#        installed. The fail-open DEFAULT is unchanged; what changes is that the skip is now
+#        visible, classifiable, countable, and refusable by a caller that needs a real gate.
+gate_skipped() {
+  local reason="${1:-${SKIP_REASON:-unknown}}"
+  local class
+  class=$(skip_reason_class "$reason")
+  echo "[codex-hook] GATE_SKIPPED reason=${reason}"
+
+  # Best-effort, always. A gate that blocks commits because its own state directory is
+  # unwritable is worse than the problem it measures.
+  # `set -u` is active, so a bare $HOME fallback ABORTS the hook where HOME is unset — a minimal
+  # CI image or a sanitized git environment — and every skipped review would then block the
+  # commit, in the documented fail-open default. Derive the root guarded, and simply do not log
+  # when there is nowhere to log to.
+  local state_root="${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}"
+  if [ -n "$state_root" ]; then
+    local log_dir="${state_root}/quality-kit"
+    local log_file="${log_dir}/gate-skips.log"
+    local repo branch
+    repo=$(git rev-parse --show-toplevel 2>/dev/null) || repo="unknown"
+    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch="unknown"
+    mkdir -p "$log_dir" 2>/dev/null || true
+    printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$reason" "$repo" "$branch" \
+      "$class" >>"$log_file" 2>/dev/null || true
+  fi
+
+  # Strict mode refuses an OUTAGE, not an unreviewable diff. Blocking a structural skip would
+  # wedge legitimate work with no way out — there is no retry and no other reviewer that makes an
+  # oversized diff reviewable, and a plan-only commit is advisory by design, so a strict repo
+  # could never land one at all. Those are still logged; they are just not a reason to refuse.
+  if [ "$REVIEW_HOOK_REQUIRE_GATE" = "1" ] && [ "$class" = "provider_failure" ]; then
+    echo "[codex-hook] BLOCKED — REVIEW_HOOK_REQUIRE_GATE=1 and the review gate did not run (${reason})."
+    echo "[codex-hook] This repo requires a real gate. Retry when the reviewer is available,"
+    echo "[codex-hook] or unset the variable to accept an ungated commit."
+    exit 1
+  fi
+  echo "[codex-hook] Proceeding without the Codex review gate."
+}
+
 # Ensure codex is available
 if ! command -v codex &>/dev/null; then
   echo "[codex-hook] codex CLI not found — skipping review."
+  gate_skipped "codex_unavailable"
   exit 0
 fi
 
@@ -107,10 +230,10 @@ fi
 
 # Codex can hang indefinitely when fed very large stdin payloads. Keep the diff
 # on disk, cap the payload size, and enforce a hard timeout on review.
-CODEX_HOOK_TIMEOUT_SECONDS=${CODEX_HOOK_TIMEOUT_SECONDS:-180}
-CODEX_HOOK_MAX_DIFF_BYTES=${CODEX_HOOK_MAX_DIFF_BYTES:-200000}
-CODEX_HOOK_MODEL=${CODEX_HOOK_MODEL:-gpt-5.4-mini}
-CODEX_HOOK_REASONING_EFFORT=${CODEX_HOOK_REASONING_EFFORT:-low}
+REVIEW_HOOK_TIMEOUT_SECONDS=$(review_hook_int_knob TIMEOUT_SECONDS 180)
+REVIEW_HOOK_MAX_DIFF_BYTES=$(review_hook_int_knob MAX_DIFF_BYTES 200000)
+REVIEW_HOOK_MODEL=$(review_hook_knob MODEL gpt-5.4-mini)
+REVIEW_HOOK_REASONING_EFFORT=$(review_hook_knob REASONING_EFFORT low)
 
 STAGED_FILES=$(git diff --cached --name-only)
 DIFF_FILE=$(mktemp /tmp/codex-hook-diff.XXXXXX)
@@ -167,13 +290,13 @@ run_codex_review() {
 
     exit $status >> 8;
   ' \
-    "$CODEX_HOOK_TIMEOUT_SECONDS" \
+    "$REVIEW_HOOK_TIMEOUT_SECONDS" \
     env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_PREFIX -u GIT_AUTHOR_DATE -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL -u GIT_EDITOR -u GIT_EXEC_PATH -u GIT_CONFIG_PARAMETERS \
     codex exec review \
       --ignore-user-config \
       --ignore-rules \
-      -m "$CODEX_HOOK_MODEL" \
-      -c "model_reasoning_effort=\"$CODEX_HOOK_REASONING_EFFORT\"" \
+      -m "$REVIEW_HOOK_MODEL" \
+      -c "model_reasoning_effort=\"$REVIEW_HOOK_REASONING_EFFORT\"" \
       -o "$output_file" \
       - <"$prompt_file" >"$TRANSCRIPT_FILE" 2>&1
   local exit_code=$?
@@ -188,6 +311,7 @@ run_codex_review() {
     if [ -s "$output_file" ]; then
       return 0
     fi
+    SKIP_REASON="empty_output"
     echo "[codex-hook] Codex produced no final review output — allowing commit."
     if [ -s "$TRANSCRIPT_FILE" ]; then
       sed -n '1,120p' "$TRANSCRIPT_FILE"
@@ -196,10 +320,30 @@ run_codex_review() {
   fi
 
   if [ "$exit_code" -eq 124 ] || [ "$exit_code" -eq 142 ]; then
-    echo "[codex-hook] Codex timed out after ${CODEX_HOOK_TIMEOUT_SECONDS}s — skipping review."
+    SKIP_REASON="timeout"
+    echo "[codex-hook] Codex timed out after ${REVIEW_HOOK_TIMEOUT_SECONDS}s — skipping review."
     return 124
   fi
 
+  # Usage exhaustion is NOT transient: it persists until the quota resets, so EVERY commit
+  # until then is ungated. Classify it separately and surface the reset time from the transcript.
+  if [ -s "$TRANSCRIPT_FILE" ] && grep -qiE "usage limit|insufficient_quota|quota exceeded" "$TRANSCRIPT_FILE"; then
+    SKIP_REASON="usage_limit"
+    echo "[codex-hook] Codex USAGE LIMIT reached — the gate is unavailable, not merely slow."
+    grep -iE "usage limit|try again at" "$TRANSCRIPT_FILE" | sed -n '1,2p' | sed 's/^/[codex-hook]   /'
+    return 1
+  fi
+
+  # Sandbox/seatbelt/landlock initialisation failures are NOT transient either: they recur on
+  # every commit until the environment is fixed. Before this reason code existed, they landed in
+  # the generic bucket and needed a human to notice rather than a count.
+  if [ -s "$TRANSCRIPT_FILE" ] && grep -qiE "(sandbox|seatbelt|landlock).*(failed to (initialize|initialise))|(failed to (initialize|initialise)).*(sandbox|seatbelt|landlock)" "$TRANSCRIPT_FILE"; then
+    SKIP_REASON="sandbox_init"
+    echo "[codex-hook] Codex sandbox could not initialise — this failure will recur on every commit until the environment is fixed."
+    return 1
+  fi
+
+  SKIP_REASON="error"
   echo "[codex-hook] Codex failed to run — allowing commit."
   if [ -s "$TRANSCRIPT_FILE" ]; then
     sed -n '1,120p' "$TRANSCRIPT_FILE"
@@ -224,8 +368,11 @@ if [ -z "$NON_PLAN_FILES" ] && [ -n "$STAGED_FILES" ]; then
   echo "[codex-hook] This review NEVER blocks the commit — findings are advisory."
   echo ""
 
-  if [ "$STAGED_DIFF_BYTES" -gt "$CODEX_HOOK_MAX_DIFF_BYTES" ]; then
-    echo "[codex-hook] Plan diff is ${STAGED_DIFF_BYTES} bytes, over ${CODEX_HOOK_MAX_DIFF_BYTES}-byte limit — skipping architecture review."
+  if [ "$STAGED_DIFF_BYTES" -gt "$REVIEW_HOOK_MAX_DIFF_BYTES" ]; then
+    echo "[codex-hook] Plan diff is ${STAGED_DIFF_BYTES} bytes, over ${REVIEW_HOOK_MAX_DIFF_BYTES}-byte limit — skipping architecture review."
+    # Emit the skip contract like every other skip path. A bare `exit 0` here left downstream
+    # tooling unable to tell an oversized plan-only commit from a reviewed one.
+    gate_skipped "oversize_plan_diff"
     exit 0
   fi
 
@@ -269,7 +416,10 @@ EOF
   echo ""
   echo "──────────────────────────────────────────────────"
   echo "[codex-hook] Architecture review complete (advisory)."
-  echo "[codex-hook] Proceeding with commit."
+  # Plan docs get architecture review only, never a code gate — advisory by design. Routed
+  # through gate_skipped rather than echoing the marker directly, so it lands in the skip log
+  # like every other ungated commit; a printed line nothing records is not evidence.
+  gate_skipped "plan_doc_advisory"
   echo "──────────────────────────────────────────────────"
   exit 0
 fi
@@ -283,10 +433,14 @@ echo ""
 REVIEW_COMPLETED=0
 REVIEW_OUTPUT=""
 
-if [ "$STAGED_DIFF_BYTES" -gt "$CODEX_HOOK_MAX_DIFF_BYTES" ]; then
-  echo "[codex-hook] Staged diff is ${STAGED_DIFF_BYTES} bytes, over ${CODEX_HOOK_MAX_DIFF_BYTES}-byte limit — skipping Codex review."
-  echo "[codex-hook] Continuing with any other commit checks."
+if [ "$STAGED_DIFF_BYTES" -gt "$REVIEW_HOOK_MAX_DIFF_BYTES" ]; then
+  # Loud by design: this skip cannot be fixed by retrying or by a different reviewer, so it must
+  # not read like routine chatter on the way past.
+  echo "  ⚠  WARNING — THIS COMMIT IS NOT BEING REVIEWED  ⚠"
+  echo "[codex-hook] Staged diff is ${STAGED_DIFF_BYTES} bytes, over the ${REVIEW_HOOK_MAX_DIFF_BYTES}-byte limit — no reviewer will see it."
+  echo "[codex-hook] Split the commit if you want it reviewed. Continuing with any other commit checks."
   echo ""
+  SKIP_REASON="oversize_diff"
 else
   {
     cat <<EOF
@@ -335,7 +489,7 @@ if [ -n "$STAGED_DASHBOARD" ]; then
 fi
 
 if [ "$REVIEW_COMPLETED" -ne 1 ]; then
-  echo "[codex-hook] Proceeding without the Codex review gate."
+  gate_skipped
   exit 0
 fi
 

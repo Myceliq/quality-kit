@@ -24,11 +24,53 @@ per machine as the global hook (`git config --global core.hooksPath`), so
 changing it here does not move any repo's pinned version.
 
 Its verdict parsing lives in `codex_verdict()`, deliberately split out and
-reachable via `CODEX_HOOK_LIB_ONLY=1` so it can be tested directly. **Findings
+reachable via `REVIEW_HOOK_LIB_ONLY=1` so it can be tested directly. **Findings
 are matched before any approval signal**, and every case in
 `hooks/git-pre-commit.test.sh` is a commit that really did pass while the hook
 printed success. Read the comments there before widening a regex — two of them
 document gaps that are deliberate, where the obvious "fix" reopens a hole.
+
+### When the review does not run
+
+Every path that reaches a commit without a completed review now prints
+`[codex-hook] GATE_SKIPPED reason=<reason>` and appends one tab-separated line to
+`${XDG_STATE_HOME:-~/.local/state}/quality-kit/gate-skips.log`
+(timestamp, reason, repo, branch, class). Before this, a skip was one
+human-readable sentence in the commit output, so nothing downstream could tell
+*reviewed and clean* from *never ran* — and in an agent-driven repo nobody reads
+the sentence.
+
+Reasons are classified into two kinds, because they want different answers:
+
+| class | reasons | what it means |
+|---|---|---|
+| `provider_failure` | `codex_unavailable`, `usage_limit`, `sandbox_init`, `timeout`, `empty_output`, `error` | the review was **unavailable**. Retrying later works. |
+| `structural` | `oversize_diff`, `oversize_plan_diff`, `plan_doc_advisory` | the diff is **not reviewable in this form**. No retry rescues it. |
+
+`usage_limit` and `sandbox_init` are separate reasons on purpose: neither is
+transient. Usage exhaustion persists until the quota resets and a sandbox that
+cannot initialise recurs on every commit until the environment is fixed, so in
+both cases the gate is *reliably* absent while continuing to look installed.
+Folded into a generic error, they needed a human to notice rather than a count.
+
+**The default still permits the commit.** To refuse one instead, set
+`REVIEW_HOOK_REQUIRE_GATE=1`, or put `"requireGate": true` in
+`.quality-kit.json` so the setting travels with the repo and survives a fresh
+clone or a CI runner that never sourced anyone's profile. An explicit
+environment variable wins over the stamped value, so a deliberate one-off
+remains possible.
+
+Strict mode refuses an **outage**, not an unreviewable diff: only
+`provider_failure` blocks. Structural skips are still logged, but blocking them
+would leave a strict repo unable to land an oversized diff or a plan doc at all,
+and no retry or alternative reviewer would change the answer.
+
+Knobs are read as `REVIEW_HOOK_<NAME>` first and `CODEX_HOOK_<NAME>` second
+(`LIB_ONLY`, `MAX_DIFF_BYTES`, `MODEL`, `REASONING_EFFORT`, `REQUIRE_GATE`,
+`TIMEOUT_SECONDS`), with a one-line notice when the legacy name is what supplied
+the value. The names match the multi-provider fork of this hook so a stamped
+fleet migrates once rather than twice; the old names keep working until every
+call site has moved.
 
 `hooks/hooks-doctor.sh <workspace-root>` answers the question nothing else on a
 box can: *is the gate actually live here?* A repo-local `core.hooksPath`
@@ -97,6 +139,10 @@ edited on a branch inside a worktree does not take effect there.
 - `profile` — which kit shape is stamped. `runner` — `npm` or `make`.
 - `pendingFlags` — tsconfig strict flags a repo may temporarily override to
   `false` while burning down errors (sanctioned staging; drift-visible).
+- `requireGate` — optional. `true` refuses any commit whose pre-commit review
+  did not run (see *When the review does not run*). Lives here rather than only
+  in the environment so it survives a fresh clone; an explicit
+  `REVIEW_HOOK_REQUIRE_GATE` still overrides it.
 - `ruleOverrides.burnDown` — `rule → allowed violation count`, generated on
   first stamp by `bin/baseline-rules.sh`. Applied at `warn` on TS profiles
   (visible, non-blocking); `extend-ignore`d on python, since ruff has no warn
