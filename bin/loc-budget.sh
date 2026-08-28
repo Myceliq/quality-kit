@@ -17,11 +17,29 @@ set -euo pipefail
 REPO="${1:?usage: loc-budget.sh <repo>}"
 REPO="$(cd "$REPO" && pwd)"
 
-# ponytail: software-factory's original carried a FACTORY_GATE skip here —
-# its CI runs this inside a container whose linked worktree has no reachable
-# .git, so the budget is unmeasurable there and it short-circuited to a loud
-# no-op. Factory-specific (the gate injects that flag itself); dropped. A
-# kit-stamped repo always runs this against a real checkout.
+# A stamped repo does NOT always run this against a real checkout, which is what
+# the earlier version of this comment assumed when it dropped the skip below.
+# Myceliq/software-factory's gate runs a stamped repo's `make validate` against a
+# content-materialised snapshot of a commit: clean bytes, deliberately no `.git`.
+# That is load-bearing there — it is what stops a worker hiding files behind
+# `.gitattributes export-ignore`, and what stops `refs/replace` pointing the gate
+# at objects other than the ones being published — so it will not grow a `.git`
+# to suit this script. `git ls-files` therefore fails, and with `set -euo
+# pipefail` the whole run exits 1: an unmeasurable budget presented as a
+# violated one, on a gate that is fail-closed, which deadlocks the repo.
+#
+# Gate-ness is read from a flag the gate INJECTS, never inferred from git
+# failing. Inferring it would mean a broken git anywhere else silently disarms
+# the enforcement below — the check would stop checking and report success,
+# which is the failure mode this whole file exists to prevent.
+#
+# The skip returns before any output on purpose: the summary line further down
+# is parsed by consumers for `^(\d+) tracked source lines` and `\(budget (\d+)\)`,
+# and emitting it here would hand them a number nothing measured.
+if [ "${FACTORY_GATE:-}" = 1 ]; then
+  echo "budget unmeasurable in gate — enforced in CI"
+  exit 0
+fi
 
 # Paths and budget: LOC_PATHS / LOC_BUDGET env vars win; otherwise read
 # .quality-kit.json's locBudget block; env overrides config, config is the

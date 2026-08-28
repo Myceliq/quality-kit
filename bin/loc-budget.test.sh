@@ -3,6 +3,14 @@
 # Why:  the counting engine is the whole point of the tool; a wrong count in
 #       either direction either lets bloat through or blocks a clean PR.
 set -euo pipefail
+# Cleared for the WHOLE suite, not per-test: `loc-budget.sh` short-circuits on
+# `FACTORY_GATE=1` (#15), and this suite can itself run inside the gate container, which
+# injects exactly that. Inherited, it turns EVERY invocation below into the skip path and
+# reds the file wholesale for a reason unrelated to the code under test — measured, not
+# assumed: with it set, `python docstring free` and `heredoc body counted` both fail
+# reporting "budget unmeasurable in gate". The one test that WANTS gate mode sets the flag
+# on its own command line, so clearing it here cannot mask what that test measures.
+unset FACTORY_GATE
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LB="$DIR/loc-budget.sh"
 fail=0
@@ -493,5 +501,36 @@ printf 'x = 1\n' > "$R/f.py"
 git -C "$R" add -A
 rc=0; err="$(bash "$LB" "$R" 2>&1 >/dev/null)" || rc=$?
 [ "$rc" = 64 ] && echo "$err" | grep -q "no source paths configured" && ok "unconfigured paths refuses loudly" || bad "unconfigured paths refuses loudly" "rc=$rc err=$err"
+
+# --- FACTORY_GATE short-circuits before any measurement (#15) ---
+# The factory's gate mounts a content snapshot with no .git, so `git ls-files` fails
+# and the budget cannot be measured there. Without the skip this exits 1 and a
+# fail-closed gate deadlocks the repo. Two properties, not one: that it skips, AND
+# that it emits no summary line — consumers parse that line, and a number nothing
+# measured is worse than no number.
+R="$(mkrepo)"
+printf 'x = 1\n' > "$R/a.py"
+git -C "$R" add -A
+rm -r "$R/.git"   # what the gate's snapshot looks like: content, no history
+rc=0; out="$(LOC_PATHS='*.py' FACTORY_GATE=1 bash "$LB" "$R" 2>&1)" || rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "unmeasurable in gate" \
+  && ! echo "$out" | grep -q "tracked source lines" \
+  && ok "FACTORY_GATE skips before measuring, and prints no summary line" \
+  || bad "FACTORY_GATE skip" "rc=$rc out=$out"
+
+# --- gate-ness is never INFERRED from git failing (#15) ---
+# The same unmeasurable tree without the flag must still refuse. If a broken git
+# implied "in a gate", any broken git anywhere would silently disarm the budget.
+R="$(mkrepo)"
+printf 'x = 1\n' > "$R/a.py"
+git -C "$R" add -A
+rm -r "$R/.git"
+# `FACTORY_GATE=` explicitly, not merely absent from the caller: this suite can itself be
+# run INSIDE the gate container, which injects `FACTORY_GATE=1`. Inheriting it would put
+# this case into gate mode and red it for a reason unrelated to the code under test — a
+# test asserting "without the flag" has to establish that, not assume the ambient shell.
+rc=0; out="$(FACTORY_GATE= LOC_PATHS='*.py' bash "$LB" "$R" 2>&1)" || rc=$?
+[ "$rc" != 0 ] && ok "an unmeasurable tree without the flag still refuses" \
+  || bad "no-flag refusal" "passed without FACTORY_GATE: out=$out"
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
