@@ -8,16 +8,22 @@ REPO="${1:?usage: count-suppressions.sh <repo>}"
 
 # Enumerate via `git ls-files --cached --others --exclude-standard`, matching
 # loc-budget.sh's approach, not `grep -r .` with a hardcoded --exclude-dir
-# list: a fixed list can't know about a nested checkout (an agent worktree
-# under .claude/worktrees/, say), so `grep -r` walks into it and counts its
-# suppressions again, once per nested copy. --exclude-standard is what keeps
-# that checkout out here — it honours .gitignore, and a worktree dir is
-# gitignored precisely so the parent repo never touches it. --cached alone
-# would do that too, but would also silently drop any real file that's been
-# written but not yet `git add`ed — --others restores that on-disk file, so
-# only gitignored (or literally absent) paths are excluded, not merely
-# unstaged ones. A failed enumeration is a loud exit, not a silent zero — a
-# counter that undercounts is exactly the miss this gate exists to catch.
+# list. Two flags, two distinct jobs — do not collapse them:
+#   - A nested checkout (an agent worktree under .claude/worktrees/, say) is
+#     excluded by git's REPOSITORY BOUNDARY, not by .gitignore: `ls-files`
+#     never descends into a directory that holds its own `.git`, ignored or
+#     not. This is the mechanism that fixes #12, and it holds even in a repo
+#     that never gitignores its worktree dir (verified empirically).
+#   - `--exclude-standard` excludes everything else `.gitignore` covers that
+#     is NOT a separate repo — node_modules, build output, vendored source.
+#     This is the job the old hardcoded --exclude-dir list used to do; drop
+#     the flag and those come flooding back in.
+#   - `--cached` alone would find both of the above, but would also silently
+#     drop a real file that's been written but not yet `git add`ed. `--others`
+#     restores that on-disk file, so a file is excluded only for being
+#     ignored or genuinely absent, never merely unstaged.
+# A failed enumeration is a loud exit, not a silent zero — a counter that
+# undercounts is exactly the miss this gate exists to catch.
 if ! git -C "$REPO" ls-files -z --cached --others --exclude-standard >/dev/null; then
   echo "cannot enumerate tracked files: git ls-files failed here" >&2
   exit 1
