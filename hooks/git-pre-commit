@@ -59,7 +59,39 @@ codex_verdict() {
   # A marker in a fenced or quoted span therefore BLOCKS. That costs a false block
   # when a review quotes a marker at this file; a human reads it and moves on.
   # The reverse error — a silent pass on a real finding — is the one that ships.
-  local scan; scan="$(printf '%s' "$out" | sed -e 's/`[^`]*`//g')"
+  # Fences are parsed, not split on. A run of three or more opens one, and only a run AT LEAST AS
+  # LONG closes it — a four-backtick fence may legally contain a literal three-backtick run, and
+  # treating that shorter run as a boundary flipped the parser to "outside", where the inline
+  # strip then removed a real marker and a trailing sign-off approved the finding.
+  #
+  # Outside a fence, a marker in single backticks is a mention of the syntax, not a finding: a
+  # review discussing this file produces those constantly, and blocking on them blocks the
+  # reviewer. Inside one, nothing is ever removed — a sanitizer able to delete the only evidence
+  # of a finding is a fail-open path, which is how this function used to come out `clean` on a
+  # review that fenced its findings. An unterminated fence leaves its tail classed as inside,
+  # i.e. preserved, which is the safe direction.
+  local scan; scan="$(printf '%s' "$out" | awk '
+    { buf = buf $0 "\n" }
+    END {
+      rest = buf; inside = 0; openlen = 0
+      while (match(rest, /`{3,}/)) {
+        pre  = substr(rest, 1, RSTART - 1)
+        run  = substr(rest, RSTART, RLENGTH)
+        rest = substr(rest, RSTART + RLENGTH)
+        if (inside == 0) {
+          gsub(/`[^`]*`/, "", pre)          # outside a fence: an inline span is a mention
+          printf "%s\001", pre
+          inside = 1; openlen = RLENGTH
+        } else if (RLENGTH >= openlen) {    # only a run at least as long as the opener closes it
+          printf "%s\001", pre
+          inside = 0; openlen = 0
+        } else {                            # a SHORTER run is fence content, not a boundary
+          printf "%s%s", pre, run
+        }
+      }
+      if (inside == 0) gsub(/`[^`]*`/, "", rest)
+      printf "%s", rest
+    }')"
   # Findings FIRST. The approval check used to run first, unanchored and
   # case-insensitive, so "LGTM apart from the [P1] SQL injection below" exited 0
   # before [P1] was ever examined — as did Codex merely QUOTING a diff line

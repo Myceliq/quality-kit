@@ -140,6 +140,38 @@ check "a marker inside a fenced block still blocks" block \
 No correctness issue found.'
 check "JSON-shaped findings are not erased by quote stripping" block \
   '{"findings":[{"severity":"high","title":"[P1] SQL injection in the auth path"}]}'
+# A COMPACT single-line fence is the shape the multi-line case never covered: the pairwise strip
+# ate the outer ticks as an empty span and read the rest as an inline span, erasing the marker.
+check "a compact single-line fenced finding still blocks" block \
+  '```[P1] null deref```'
+# ...and a fence may use any run of three or more, so the run must be matched in full.
+check "a four-backtick fence run still blocks" block \
+  '````[P1] null deref````'
+
+# The shape fence-delimiter neutralisation alone did NOT cover: a marker in single backticks
+# INSIDE a fence. Neutralising only the delimiters left the span's insides exposed to the inline
+# strip, so the marker vanished and a trailing sign-off approved a real finding.
+check "a marker in backticks inside a fence still blocks" block \
+  '```see `[P1]` here```
+LGTM'
+check "a marker in backticks inside a multi-line fence still blocks" block \
+  '```
+here is the problem: `[P1]` null deref
+```
+LGTM'
+# ...while the same shape OUTSIDE a fence remains a mention of the syntax, not a finding.
+check "a backticked marker outside any fence is still not a finding" clean \
+  'this gate blocks on every `[P1]` substring'
+
+# A four-backtick fence may legally contain a literal three-backtick run. Treating that shorter
+# run as a boundary flipped the parser to "outside", where the inline strip removed the marker.
+check "a shorter run inside a longer fence does not end it" block \
+  '````
+```
+see `[P1]` here
+````
+LGTM'
+
 check "real finding outside a fenced block still blocks" block \
 '```
 context: existing code shown for reference
