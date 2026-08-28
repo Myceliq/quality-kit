@@ -37,6 +37,7 @@ put() { install -m "$2" "$KIT/$1" "$REPO/$3"; STAMPED+=("$3"); }
 put hooks/format-changed.sh         755 .quality/format-changed.sh
 put hooks/format-changed-adapter.sh 755 .quality/format-changed-adapter.sh
 put hooks/stop-validate.sh          755 .quality/stop-validate.sh
+put bin/loc-budget.sh              755 .quality/loc-budget.sh
 put hooks/codex-hooks.json          644 .codex/hooks.json
 
 RUNNER=npm

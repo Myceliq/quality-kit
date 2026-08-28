@@ -52,7 +52,9 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
   - `ignoreOverrides` — repo-specific ignore globs (generated dirs, vendored
     code), appended to the fleet preset's patterns.
 - Never delete or skip tests to get green.
-- A configured `.quality-kit.json` `locBudget` is a CI gate, not advisory.
+- A configured `.quality-kit.json` `locBudget` is mandatory, not advisory: TS
+  profiles run it in stamped CI; Python runs it in stamped `make validate` /
+  `validate-fast` (Python CI itself remains a documented v1 gap).
 - CHORE markers record out-of-footprint cleanup instead of doing it:
   `CHORE(<what is wrong>): <the cheaper shape>`, in that file's own comment syntax. Only in
   a file the change already touches — a marker in an untouched file widens the diff and

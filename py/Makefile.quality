@@ -1,11 +1,12 @@
 # quality-kit stamped file — do not edit in the repo; change the kit instead.
-.PHONY: validate validate-fast format format-check lint typecheck test-unit
+.PHONY: validate validate-fast format format-check lint typecheck test-unit source-budget
 
 format: ; ruff format .
 format-check: ; ruff format --check .
 lint: ; ruff check .
 typecheck: ; pyright
 test-unit: ; pytest -q
+source-budget: ; bash .quality/loc-budget.sh . --if-configured
 
-validate: format-check lint typecheck test-unit
-validate-fast: format-check lint typecheck test-unit
+validate: format-check lint typecheck test-unit source-budget
+validate-fast: format-check lint typecheck test-unit source-budget

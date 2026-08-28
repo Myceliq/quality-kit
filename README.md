@@ -120,8 +120,9 @@ edited on a branch inside a worktree does not take effect there.
   `LOC_BUDGET` env vars override this block; the block is the repo-committed
   default. Neither source configured is a loud refusal, not a
   default-everything sweep — sweeping the whole tree would silently count
-  vendored/generated code. Stamped CI runs it whenever the block exists; run
-  the same script locally from a quality-kit checkout when changing the budget.
+  vendored/generated code. Stamped TS CI runs it whenever the block exists;
+  Python's stamped `validate` targets run the same gate locally (and in any CI
+  that invokes them) while the documented Python CI gap remains.
 
 Rule ids use **config form**, not diagnostic form: core eslint rules are bare
 (`func-style`), everything else is `plugin/rule` (`unicorn/filename-case`).

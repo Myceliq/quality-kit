@@ -23,7 +23,7 @@ R="$(mk_ts_repo)"
 first_out="$(bash "$S" "$R" --profile nextjs 2>&1)"
 echo "$first_out"
 
-for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/agent-legibility.ts .quality/suppression-baseline.json \
+for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/loc-budget.sh .quality/agent-legibility.ts .quality/suppression-baseline.json \
          .quality/manifest.sha256 .quality-kit.json oxlint.config.ts oxfmt.config.ts \
          tsconfig.quality.json .github/workflows/quality.yml .codex/hooks.json .claude/settings.json; do
   [ -f "$R/$f" ] && ok "stamped $f" || bad "stamped $f" "missing"
@@ -100,8 +100,24 @@ P="$(mktemp -d)"; (cd "$P" && git init -q && git config core.hooksPath /dev/null
 bash "$S" "$P" --profile python
 [ -f "$P/ruff.toml" ] && [ -f "$P/Makefile.quality" ] && grep -q 'include Makefile.quality' "$P/Makefile" \
   && ok "python profile stamps + Makefile include" || bad "python profile" "files missing"
+grep -q '^source-budget:.*\.quality/loc-budget.sh . --if-configured' "$P/Makefile.quality" \
+  && grep -q '^validate-fast:.*source-budget' "$P/Makefile.quality" \
+  && ok "python validation enforces configured source budget" \
+  || bad "python validation enforces configured source budget" "target missing"
 python3 -c "import json; assert json.load(open('$P/.quality-kit.json'))['runner']=='make'" \
   && ok "python runner=make" || bad "python runner=make" "wrong runner"
+printf 'first = 1\nsecond = 2\n' > "$P/app.py"
+git -C "$P" add app.py
+python3 - "$P/.quality-kit.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+data = json.load(open(p))
+data["locBudget"] = {"paths": ["app.py"], "budget": 1}
+open(p, "w").write(json.dumps(data) + "\n")
+PY
+rc=0; make -s -C "$P" source-budget >/dev/null 2>&1 || rc=$?
+[ "$rc" = 2 ] && ok "python source-budget target blocks over budget" \
+  || bad "python source-budget target blocks over budget" "rc=$rc"
 
 rc=0; bash "$S" "$R" --profile bogus 2>/dev/null || rc=$?
 [ "$rc" = 64 ] && ok "unknown profile usage error" || bad "unknown profile usage error" "rc=$rc"
