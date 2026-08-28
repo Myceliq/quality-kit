@@ -3,6 +3,14 @@
 # Why:  the counting engine is the whole point of the tool; a wrong count in
 #       either direction either lets bloat through or blocks a clean PR.
 set -euo pipefail
+# Cleared for the WHOLE suite, not per-test: `loc-budget.sh` short-circuits on
+# `FACTORY_GATE=1` (#15), and this suite can itself run inside the gate container, which
+# injects exactly that. Inherited, it turns EVERY invocation below into the skip path and
+# reds the file wholesale for a reason unrelated to the code under test — measured, not
+# assumed: with it set, `python docstring free` and `heredoc body counted` both fail
+# reporting "budget unmeasurable in gate". The one test that WANTS gate mode sets the flag
+# on its own command line, so clearing it here cannot mask what that test measures.
+unset FACTORY_GATE
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LB="$DIR/loc-budget.sh"
 fail=0
@@ -517,7 +525,11 @@ R="$(mkrepo)"
 printf 'x = 1\n' > "$R/a.py"
 git -C "$R" add -A
 rm -r "$R/.git"
-rc=0; out="$(LOC_PATHS='*.py' bash "$LB" "$R" 2>&1)" || rc=$?
+# `FACTORY_GATE=` explicitly, not merely absent from the caller: this suite can itself be
+# run INSIDE the gate container, which injects `FACTORY_GATE=1`. Inheriting it would put
+# this case into gate mode and red it for a reason unrelated to the code under test — a
+# test asserting "without the flag" has to establish that, not assume the ambient shell.
+rc=0; out="$(FACTORY_GATE= LOC_PATHS='*.py' bash "$LB" "$R" 2>&1)" || rc=$?
 [ "$rc" != 0 ] && ok "an unmeasurable tree without the flag still refuses" \
   || bad "no-flag refusal" "passed without FACTORY_GATE: out=$out"
 
