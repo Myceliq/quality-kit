@@ -187,6 +187,18 @@ re-stamp byte-exact.
 Hit during the mentzer-method pilot (Wave 1). Check these before opening the
 stamp PR — most of them BLOCK a green stamp.
 
+- **The kit is npm-only, and `stamp.sh` now refuses anything else.**
+  `.github/workflows/quality.yml` runs `npm ci` with a `cache: 'npm'` key, and
+  `check-drift.sh` verifies the `next` floor from `package-lock.json` and fails
+  closed without one. So a pnpm repo used to stamp *successfully* and receive CI
+  that cannot install plus a drift gate permanently red on a file it will never
+  have. The stamper now detects the manager — from the lockfile, and from a
+  declared `packageManager` — and exits `78` before writing anything rather than
+  shipping that. Two conflicting signals are refused as ambiguous rather than
+  resolved. A repo with no signal at all still stamps, since stamping before the
+  first install reconcile is a normal flow. Real pnpm support is
+  [#7](https://github.com/Myceliq/quality-kit/issues/7); `yarn` is deliberately
+  out of scope.
 - **The stamped `.codex/hooks.json` does not run until Codex trusts the repo.**
   Both of Codex's trust gates skip hooks silently, so the stamp looks complete
   while the turn-end gate is off. See "The stamped Codex hooks" above.

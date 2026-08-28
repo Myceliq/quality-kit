@@ -219,4 +219,98 @@ else
   echo "SKIP python first-stamp ordering (no ruff/uvx available)"
 fi
 
+# --- an unsupported package manager must not produce a green stamp (#7) -------
+# quality.yml runs `npm ci` and check-drift reads package-lock.json, so a pnpm repo
+# used to stamp SUCCESSFULLY and receive CI that cannot install plus a drift gate
+# red on a file it will never have. Each case asserts the refusal AND that nothing
+# was written — a half-stamped repo is its own problem.
+pm_repo() { # pm_repo <lockfiles> [package.json contents]
+  local r; r="$(mktemp -d)"
+  (
+    cd "$r"
+    git init -q && git config core.hooksPath /dev/null
+    printf '%s' "${2:-{\"name\":\"pm\"\}}" > package.json
+    printf '{"compilerOptions":{"jsx":"preserve"}}' > tsconfig.json
+    for f in $1; do printf 'lock\n' > "$f"; done
+    git add -A && git -c user.name=t -c user.email=t@t.local commit -q -m init
+  ) >/dev/null
+  echo "$r"
+}
+
+refuses() { # refuses <name> <repo> <expected-substring>
+  local name="$1" repo="$2" want="$3" out rc=0
+  out="$(bash "$S" "$repo" --profile nextjs 2>&1)" || rc=$?
+  if [ "$rc" = 0 ]; then
+    bad "$name" "stamp SUCCEEDED on an unsupported manager"
+  elif ! printf '%s' "$out" | grep -q "$want"; then
+    bad "$name" "wrong message: $out"
+  elif [ -e "$repo/.quality-kit.json" ] || [ -e "$repo/.github/workflows/quality.yml" ]; then
+    bad "$name" "refused but left the repo half-stamped"
+  else
+    ok "$name"
+  fi
+}
+
+refuses "pnpm repo is refused, not silently stamped as npm" "$(pm_repo pnpm-lock.yaml)" 'detected \[pnpm\]'
+refuses "yarn repo is refused (out of scope, not treated as npm)" "$(pm_repo yarn.lock)" 'detected \[yarn\]'
+refuses "bun repo is refused" "$(pm_repo bun.lockb)" 'detected \[bun\]'
+
+# Two lockfiles is ambiguous. Picking one is how a repo gets CI for a manager it
+# does not use, so it fails closed rather than resolving.
+refuses "two lockfiles are ambiguous and refused, not resolved" \
+  "$(pm_repo 'package-lock.json pnpm-lock.yaml')" 'detected \[npm pnpm\]'
+
+# A declared manager is positive evidence even before its lockfile is committed —
+# otherwise a fresh pnpm repo looks like a bare repo and sails through.
+refuses "a declared packageManager is honoured without a lockfile" \
+  "$(pm_repo '' '{"name":"pm","packageManager":"pnpm@9.1.0"}')" 'detected \[pnpm\]'
+
+# ...and a declaration contradicting the lockfile is ambiguous, not resolved either way.
+refuses "a packageManager contradicting the lockfile is refused" \
+  "$(pm_repo package-lock.json '{"name":"pm","packageManager":"pnpm@9.1.0"}')" 'detected \[npm pnpm\]'
+
+# The other direction, or the refusal is a repo-wide outage rather than a guard.
+NPMR="$(pm_repo package-lock.json)"
+bash "$S" "$NPMR" --profile nextjs >/dev/null 2>&1 \
+  && [ -f "$NPMR/.github/workflows/quality.yml" ] \
+  && ok "an npm repo still stamps" || bad "an npm repo still stamps" "refused a supported repo"
+
+# No signal at all stays allowed on purpose: stamping before the first install
+# reconcile is an existing flow, and refusing it would break re-stamps for the two
+# repos already on the kit.
+BAREM="$(pm_repo '')"
+bash "$S" "$BAREM" --profile nextjs >/dev/null 2>&1 \
+  && [ -f "$BAREM/.quality-kit.json" ] \
+  && ok "a repo with no lockfile and no declaration still stamps" \
+  || bad "a repo with no lockfile and no declaration still stamps" "refused"
+
+# A missing python3 must fail loudly, not quietly downgrade detection. It was always
+# a hard requirement (the merges below are a python3 heredoc); swallowing its absence
+# during detection would turn a declared pnpm repo back into a silent npm stamp.
+# PATH is cut down to just what stamp.sh uses before the guard, so python3 is genuinely
+# unreachable rather than merely shadowed.
+NOPY="$(mktemp -d)/bin"; mkdir -p "$NOPY"
+for b in bash dirname cat; do ln -s "$(command -v "$b")" "$NOPY/$b"; done
+PMR="$(pm_repo '' '{"name":"pm","packageManager":"pnpm@9.1.0"}')"
+rc=0
+out="$(PATH="$NOPY" bash "$S" "$PMR" --profile nextjs 2>&1)" || rc=$?
+if [ "$rc" = 0 ]; then
+  bad "a missing python3 is refused, not silently downgraded" "stamp SUCCEEDED without python3"
+elif printf '%s' "$out" | grep -q "python3 is required"; then
+  ok "a missing python3 is refused, not silently downgraded"
+else
+  bad "a missing python3 is refused, not silently downgraded" "wrong message: $out"
+fi
+
+# Python profiles never write quality.yml or read package-lock.json, so a stray JS
+# lockfile is none of this check's business.
+PYR="$(mktemp -d)"
+(cd "$PYR" && git init -q && git config core.hooksPath /dev/null \
+   && printf 'lock\n' > pnpm-lock.yaml \
+   && git add -A && git -c user.name=t -c user.email=t@t.local commit -q -m init) >/dev/null
+bash "$S" "$PYR" --profile python >/dev/null 2>&1 \
+  && [ -f "$PYR/.quality-kit.json" ] \
+  && ok "a python repo with a stray JS lockfile is unaffected" \
+  || bad "a python repo with a stray JS lockfile is unaffected" "refused"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
