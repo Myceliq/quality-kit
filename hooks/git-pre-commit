@@ -59,15 +59,29 @@ codex_verdict() {
   # A marker in a fenced or quoted span therefore BLOCKS. That costs a false block
   # when a review quotes a marker at this file; a human reads it and moves on.
   # The reverse error — a silent pass on a real finding — is the one that ships.
-  # Fence RUNS are neutralised before the strip, and must be matched in FULL. The strip consumes
-  # backticks pairwise, so a COMPACT single-line fence — ```<marker> null deref``` — has its outer
-  # ticks eaten as an empty span and the remainder read as an inline span: the marker vanishes and
-  # a trailing sign-off approves a real finding. The multi-line fence case above never saw it,
-  # because there the ticks sit on their own lines. A fence may use ANY run of three or more, so
-  # replacing exactly three of four would leave one tick each side and reopen the same hole.
-  # Replacing the run with a non-backtick sentinel keeps the marker exposed to matching while
-  # genuine single-tick inline spans are still stripped — fenced CONTENT is never dropped.
-  local scan; scan="$(printf '%s' "$out" | sed -E -e 's/`{3,}/\x01/g' -e 's/`[^`]*`//g')"
+  # Inline code spans are stripped OUTSIDE fenced spans only. Two rules pull against each other
+  # and both matter:
+  #   - a marker in single backticks is a mention of the syntax, not a finding — a review
+  #     discussing this file produces those constantly, and blocking on them blocks the reviewer;
+  #   - fenced CONTENT is never dropped, because a sanitizer able to delete the only evidence of
+  #     a finding is a fail-open path, and that is how this function used to come out `clean` on
+  #     a review that fenced its findings.
+  # Neutralising the fence delimiters alone was not enough: it left the span's insides exposed to
+  # the inline strip, so ```see `[P1]` here``` still lost its marker and a trailing sign-off then
+  # approved a real finding. Splitting on fence RUNS and transforming only the outside segments
+  # is what actually separates the two rules. A run is three or more, matched in full — replacing
+  # exactly three of four would leave a stray tick and reopen it. An unterminated fence leaves
+  # its tail classed as inside, i.e. preserved, which is the safe direction.
+  local scan; scan="$(printf '%s' "$out" | awk '
+    { buf = buf $0 "\n" }
+    END {
+      n = split(buf, seg, /`{3,}/)
+      for (i = 1; i <= n; i++) {
+        s = seg[i]
+        if (i % 2 == 1) gsub(/`[^`]*`/, "", s)   # outside a fence
+        printf "%s\001", s
+      }
+    }')"
   # Findings FIRST. The approval check used to run first, unanchored and
   # case-insensitive, so "LGTM apart from the [P1] SQL injection below" exited 0
   # before [P1] was ever examined — as did Codex merely QUOTING a diff line

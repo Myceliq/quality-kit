@@ -148,6 +148,21 @@ check "a compact single-line fenced finding still blocks" block \
 check "a four-backtick fence run still blocks" block \
   '````[P1] null deref````'
 
+# The shape fence-delimiter neutralisation alone did NOT cover: a marker in single backticks
+# INSIDE a fence. Neutralising only the delimiters left the span's insides exposed to the inline
+# strip, so the marker vanished and a trailing sign-off approved a real finding.
+check "a marker in backticks inside a fence still blocks" block \
+  '```see `[P1]` here```
+LGTM'
+check "a marker in backticks inside a multi-line fence still blocks" block \
+  '```
+here is the problem: `[P1]` null deref
+```
+LGTM'
+# ...while the same shape OUTSIDE a fence remains a mention of the syntax, not a finding.
+check "a backticked marker outside any fence is still not a finding" clean \
+  'this gate blocks on every `[P1]` substring'
+
 check "real finding outside a fenced block still blocks" block \
 '```
 context: existing code shown for reference
