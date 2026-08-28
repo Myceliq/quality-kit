@@ -78,6 +78,10 @@ PYR="$(mktemp -d)"; (cd "$PYR" && git init -q && git config core.hooksPath /dev/
   && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
 bash "$DIR/stamp.sh" "$PYR" --profile python >/dev/null
 run "$PYR" >/dev/null && ok "stamped python repo clean" || bad "stamped python repo clean" "$(run "$PYR" || true)"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$PYR/.quality/loc-budget.sh"
+out="$(run "$PYR" || true)"
+echo "$out" | grep -q "DRIFT.*loc-budget" && ok "tampered source-budget gate caught" || bad "tampered source-budget gate caught" "$out"
+cp "$KITROOT/bin/loc-budget.sh" "$PYR/.quality/loc-budget.sh"
 sed -i '/include Makefile.quality/d' "$PYR/Makefile"
 out="$(run "$PYR" || true)"
 echo "$out" | grep -q "DRIFT.*Makefile" && ok "dropped Makefile include caught" || bad "dropped Makefile include caught" "$out"

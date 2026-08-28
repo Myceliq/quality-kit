@@ -26,6 +26,7 @@ same() { cmp -s "$KIT/$1" "$REPO/$2" || err "$2 diverges from kit — restore it
 same hooks/format-changed.sh         .quality/format-changed.sh
 same hooks/format-changed-adapter.sh .quality/format-changed-adapter.sh
 same hooks/stop-validate.sh          .quality/stop-validate.sh
+same bin/loc-budget.sh               .quality/loc-budget.sh
 same hooks/codex-hooks.json          .codex/hooks.json
 # profile is repo-controlled (.quality-kit.json) — flipping it would let the
 # checks below skip a whole category unless we confirm the *other* profile's
