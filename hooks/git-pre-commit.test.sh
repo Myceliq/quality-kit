@@ -140,6 +140,14 @@ check "a marker inside a fenced block still blocks" block \
 No correctness issue found.'
 check "JSON-shaped findings are not erased by quote stripping" block \
   '{"findings":[{"severity":"high","title":"[P1] SQL injection in the auth path"}]}'
+# A COMPACT single-line fence is the shape the multi-line case never covered: the pairwise strip
+# ate the outer ticks as an empty span and read the rest as an inline span, erasing the marker.
+check "a compact single-line fenced finding still blocks" block \
+  '```[P1] null deref```'
+# ...and a fence may use any run of three or more, so the run must be matched in full.
+check "a four-backtick fence run still blocks" block \
+  '````[P1] null deref````'
+
 check "real finding outside a fenced block still blocks" block \
 '```
 context: existing code shown for reference

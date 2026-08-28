@@ -59,7 +59,15 @@ codex_verdict() {
   # A marker in a fenced or quoted span therefore BLOCKS. That costs a false block
   # when a review quotes a marker at this file; a human reads it and moves on.
   # The reverse error — a silent pass on a real finding — is the one that ships.
-  local scan; scan="$(printf '%s' "$out" | sed -e 's/`[^`]*`//g')"
+  # Fence RUNS are neutralised before the strip, and must be matched in FULL. The strip consumes
+  # backticks pairwise, so a COMPACT single-line fence — ```<marker> null deref``` — has its outer
+  # ticks eaten as an empty span and the remainder read as an inline span: the marker vanishes and
+  # a trailing sign-off approves a real finding. The multi-line fence case above never saw it,
+  # because there the ticks sit on their own lines. A fence may use ANY run of three or more, so
+  # replacing exactly three of four would leave one tick each side and reopen the same hole.
+  # Replacing the run with a non-backtick sentinel keeps the marker exposed to matching while
+  # genuine single-tick inline spans are still stripped — fenced CONTENT is never dropped.
+  local scan; scan="$(printf '%s' "$out" | sed -E -e 's/`{3,}/\x01/g' -e 's/`[^`]*`//g')"
   # Findings FIRST. The approval check used to run first, unanchored and
   # case-insensitive, so "LGTM apart from the [P1] SQL injection below" exited 0
   # before [P1] was ever examined — as did Codex merely QUOTING a diff line
