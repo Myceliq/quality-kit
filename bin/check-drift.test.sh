@@ -196,6 +196,105 @@ import json; p='$R/package.json'; d=json.load(open(p)); d['scripts']=json.load(o
 out="$(run "$R" || true)"
 echo "$out" | grep -q "is below" && bad "the floor does not apply off the nextjs profile" "$out" || ok "the floor does not apply off the nextjs profile"
 
+# --- I3b: the same floor, read out of a pnpm lockfile (#7) --------------------
+# The floor check exists because the LOCKFILE is what CI installs, so under pnpm
+# it has to read pnpm-lock.yaml — falling back to the package.json range would be
+# the exact defect the npm reader was written to avoid. pnpm's two lockfile
+# generations differ materially and both are in the fleet, so both are covered.
+pnpm_lock() { # pnpm_lock <next-version> <lockfileVersion>
+  # The shapes below are trimmed copies of REAL pnpm output (8.15.9 writes 6.0
+  # with a top-level `dependencies:`; 9-11 write 9.0 nesting it under
+  # `importers:`/`.:`), peer suffix on `version:` included — pnpm really does
+  # write `16.3.1(react@19.2.0)`, and a reader that kept the suffix would fail to
+  # parse every conforming repo.
+  case "$2" in
+    6.0) printf "lockfileVersion: '6.0'\n\nsettings:\n  autoInstallPeers: true\n\ndependencies:\n  next:\n    specifier: ^%s\n    version: %s(react@19.2.0)\n\npackages:\n\n  /next@%s:\n    resolution: {integrity: sha512-x}\n    dev: false\n" "$1" "$1" "$1" ;;
+    *)   printf "lockfileVersion: '%s'\n\nsettings:\n  autoInstallPeers: true\n\nimporters:\n\n  .:\n    dependencies:\n      next:\n        specifier: ^%s\n        version: %s(react@19.2.0)\n\npackages:\n\n  next@%s:\n    resolution: {integrity: sha512-x}\n" "$2" "$1" "$1" "$1" ;;
+  esac
+}
+
+fresh_pnpm() { # like fresh(), on pnpm. $1 = locked next version, $2 = lockfileVersion,
+               # $3 = extra package.json keys (the no-lockfile case needs a
+               # declared packageManager, the only thing that still identifies
+               # the repo as pnpm once its lockfile is gone).
+  local r nv="${1:-16.3.1}" lv="${2:-9.0}" extra="${3:-}"; r="$(mktemp -d)"
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null \
+    && printf '{"name":"fix",%s"dependencies":{"next":"^%s"},"scripts":{"build":"true"}}' "$extra" "$nv" > package.json \
+    && pnpm_lock "$nv" "$lv" > pnpm-lock.yaml \
+    && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
+    && printf '{}' > tsconfig.json && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
+  bash "$DIR/stamp.sh" "$r" --profile nextjs >/dev/null
+  echo "$r"
+}
+
+R="$(fresh_pnpm)"
+run "$R" >/dev/null && ok "freshly stamped pnpm repo is clean" || bad "freshly stamped pnpm repo is clean" "$(run "$R" || true)"
+cmp -s "$KITROOT/ts/quality.pnpm.yml" "$R/.github/workflows/quality.yml" \
+  && ok "a pnpm repo gets the pnpm workflow" || bad "a pnpm repo gets the pnpm workflow" "wrong variant stamped"
+
+# swapping in the npm workflow is CI that cannot install — the byte-owned check
+# has to pick its expected file by MANAGER, not by a fixed name
+R="$(fresh_pnpm)"; cp "$KITROOT/ts/quality.npm.yml" "$R/.github/workflows/quality.yml"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*quality.yml diverges" && ok "pnpm repo carrying the npm workflow caught" || bad "pnpm repo carrying the npm workflow caught" "$out"
+
+R="$(fresh_pnpm 16.3.1 6.0)"
+run "$R" >/dev/null && ok "lockfileVersion 6 resolves the floor" || bad "lockfileVersion 6 resolves the floor" "$(run "$R" || true)"
+
+R="$(fresh_pnpm 16.2.4)"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*next 16.2.4 is below" && ok "pnpm-locked next below the floor caught (v9)" || bad "pnpm-locked next below the floor caught (v9)" "$out"
+
+R="$(fresh_pnpm 16.2.4 6.0)"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*next 16.2.4 is below" && ok "pnpm-locked next below the floor caught (v6)" || bad "pnpm-locked next below the floor caught (v6)" "$out"
+
+# the remedy has to name a command the repo can run — telling a pnpm repo to
+# `npm install next@latest` is a fix that corrupts what it was meant to repair
+echo "$out" | grep -q "pnpm add next@latest" && ok "the pnpm remedy names a pnpm command" || bad "the pnpm remedy names a pnpm command" "$out"
+
+# fail-closed: a pnpm repo with no pnpm-lock.yaml. The declared packageManager is
+# what still identifies it as pnpm, so the message must name pnpm-lock.yaml —
+# reporting package-lock.json would send the repo to regenerate the wrong file.
+R="$(fresh_pnpm 16.3.1 9.0 '"packageManager":"pnpm@9.1.0",')"
+rm -f "$R/pnpm-lock.yaml"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*without pnpm-lock.yaml" && ok "pnpm repo with no pnpm-lock.yaml fails closed" || bad "pnpm repo with no pnpm-lock.yaml fails closed" "$out"
+
+# fail-closed: an unrecognised schema. 5.4 (pnpm 7) really did key deps flat, and
+# a future version may key them somewhere else again — reading a version out of a
+# shape the gate does not understand is worse than saying it cannot.
+R="$(fresh_pnpm)"
+printf "lockfileVersion: '5.4'\n\ndependencies:\n  next: 16.2.4\n" > "$R/pnpm-lock.yaml"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*lockfileVersion" && ok "unrecognised pnpm lockfile schema fails closed" || bad "unrecognised pnpm lockfile schema fails closed" "$out"
+
+# ...and it must not have quietly PASSED by finding nothing, which is the shape a
+# guessing reader degrades into
+echo "$out" | grep -q "does not know how to read" && ok "the unrecognised-schema message refuses to guess" || bad "the unrecognised-schema message refuses to guess" "$out"
+
+# fail-closed: a pnpm lockfile that pins no next at all (a workspace declaring it
+# in a package rather than at the root lands here too — #7 part 5)
+R="$(fresh_pnpm)"
+printf "lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies:\n      react:\n        specifier: ^19\n        version: 19.2.0\n" > "$R/pnpm-lock.yaml"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*pins no next version" && ok "pnpm lockfile without next fails closed" || bad "pnpm lockfile without next fails closed" "$out"
+
+# BOTH lockfiles present is ambiguous: the gate must refuse rather than pick one,
+# or a repo installing pnpm gets its floor verified against an npm lockfile that
+# nothing keeps up to date.
+R="$(fresh_pnpm)"; printf '{"lockfileVersion":3,"packages":{"node_modules/next":{"version":"16.3.1"}}}' > "$R/package-lock.json"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*unsupported package manager: detected \[npm pnpm\]" && ok "both lockfiles present fails closed" || bad "both lockfiles present fails closed" "$out"
+
+# yarn must not reach a green gate by being read as npm. The npm lockfile is
+# REPLACED, not merely joined: leaving it in place would only exercise the
+# ambiguity branch above, and a gate that resolved a lone `yarn` to npm would
+# stay green through that test.
+R="$(fresh)"; mv "$R/package-lock.json" "$R/yarn.lock"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*unsupported package manager: detected \[yarn\]" && ok "yarn alone is refused by the gate, not treated as npm" || bad "yarn alone is refused by the gate, not treated as npm" "$out"
+
 # --- I4: the Node floor (cockpit#87) ---
 # The kit's pinned toolchain floors Node at 22.12.0 (ultracite pulls
 # commander@15 at a flat >=22.12.0, with no Node 20 branch). Nothing stated it

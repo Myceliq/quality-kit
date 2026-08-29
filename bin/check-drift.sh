@@ -22,6 +22,27 @@ PIN="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version']
 KITV="$(cat "$KIT/VERSION")"
 [ "$PIN" = "$KITV" ] || err "kit pin $PIN != checked-out kit $KITV — CI must check out tag quality-kit-v$PIN"
 
+# Which package manager this repo is on, from the same detector stamp.sh writes
+# against (#7). It decides two things below: which quality.yml variant the
+# stamped workflow must match byte-for-byte, and which lockfile the next floor is
+# read from. Resolving it here rather than in each place is what keeps the gate
+# from checking a repo against CI it was never given.
+# An unsupported or ambiguous answer exits IMMEDIATELY rather than accumulating
+# into `fail`: every remaining manager-dependent check would be reading the wrong
+# file, and a pile of consequential DRIFT lines buries the one real remedy.
+MANAGER=npm
+if [ "$PROFILE" != python ]; then
+  DETECTED="$(bash "$KIT/bin/detect-manager.sh" "$REPO")"
+  case "$DETECTED" in
+    ""|"npm") MANAGER=npm ;;
+    "pnpm")   MANAGER=pnpm ;;
+    *)
+      echo "DRIFT: unsupported package manager: detected [$DETECTED] — this kit supports npm and pnpm, one per repo. Two detected means the lockfiles (or a packageManager field) disagree: delete the one for the manager this repo does not install, then re-stamp. yarn and bun are out of scope (Myceliq/quality-kit#7)" >&2
+      exit 1
+      ;;
+  esac
+fi
+
 same() { cmp -s "$KIT/$1" "$REPO/$2" || err "$2 diverges from kit — restore it or change the kit and re-stamp; local edits to stamped files are not allowed"; }
 same hooks/format-changed.sh         .quality/format-changed.sh
 same hooks/format-changed-adapter.sh .quality/format-changed-adapter.sh
@@ -48,12 +69,15 @@ else
   same "ts/oxlint.config.$PROFILE.ts" oxlint.config.ts
   same ts/oxfmt.config.ts oxfmt.config.ts
   same ts/tsconfig.strict.json tsconfig.quality.json
-  same ts/quality.yml .github/workflows/quality.yml
+  # by MANAGER, not a fixed name: a pnpm repo carrying the npm workflow (or the
+  # reverse) is CI that cannot install, and it is exactly what a re-stamp after a
+  # manager migration would leave behind if nobody re-ran the stamper.
+  same "ts/quality.$MANAGER.yml" .github/workflows/quality.yml
 fi
 
-python3 - "$KIT" "$REPO" "$PROFILE" <<'PY' || fail=1
+python3 - "$KIT" "$REPO" "$PROFILE" "$MANAGER" <<'PY' || fail=1
 import ast, json, os, re, stat, sys
-kit, repo, profile = sys.argv[1:4]
+kit, repo, profile, manager = sys.argv[1:5]
 rc = 0
 def err(m):
     global rc; rc = 1; print(f"DRIFT: {m}", file=sys.stderr)
@@ -153,6 +177,89 @@ def _semver(v):
     nums = tuple(int(x) for x in base.split(".")[:3])
     return nums + (0,) * (3 - len(nums)), 0 if pre else 1
 
+# Per-manager facts the floor messages need, so each remedy names a command the
+# repo can actually run. A pnpm repo told to "run npm install" is a remedy that
+# corrupts the repo it was meant to fix.
+MANAGERS = {
+    "npm":  {"lock": "package-lock.json", "install": "npm ci",
+             "refresh": "npm install", "bump": "npm install next@latest"},
+    "pnpm": {"lock": "pnpm-lock.yaml", "install": "pnpm install --frozen-lockfile",
+             "refresh": "pnpm install --lockfile-only", "bump": "pnpm add next@latest"},
+}
+
+_YAML_KEY_RE = re.compile(r"^(\s*)(?:'([^']*)'|\"([^\"]*)\"|([^\s#][^:]*?))\s*:(?:\s(.*))?$")
+
+def _yaml_scalar(text, path):
+    # The value at one block-mapping path, in the SUBSET of YAML pnpm writes:
+    # space-indented mappings, keys optionally single/double quoted, scalars on
+    # the key's own line. There is no YAML parser in the stdlib and the kit takes
+    # no dependencies, so this reads the shape rather than the format.
+    # The lookup is EXACT-PATH — full key sequence, exact depth — which is what
+    # makes a non-parser safe here: anything this scanner misreads elsewhere in
+    # the file simply never matches the path being asked for, so a mistake can
+    # only lose an answer (which fails closed at the caller), never invent one.
+    # ponytail: no anchors, no flow mappings, no multi-line or folded scalars, no
+    # sequences. Ceiling: a lockfile using any of those ON THESE PATHS reads as
+    # absent. Upgrade path: a real YAML parser, which would be the kit's first
+    # runtime dependency — do that only when a real repo needs it.
+    stack = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        m = _YAML_KEY_RE.match(line)
+        if not m:
+            continue
+        indent = len(m.group(1))
+        key = m.group(2) or m.group(3) or (m.group(4) or "").strip()
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        stack.append((indent, key))
+        if tuple(k for _, k in stack) == tuple(path):
+            return (m.group(5) or "").strip()
+    return None
+
+# Where a pnpm lockfile records the resolved version of a direct dependency, per
+# lockfile generation. Both verified against real files, not documentation:
+#   6 (pnpm 8.15.9):     a TOP-LEVEL `dependencies:` map
+#   9 (pnpm 9 - 11.9.0): the same map nested under `importers:` / `.:`
+# The two generations are not interchangeable in either direction — pnpm >= 9
+# refuses a 6 lockfile outright (ERR_PNPM_LOCKFILE_BREAKING_CHANGE) — which is
+# why this is a table of known schemas and not a search for whichever key
+# happens to be present.
+PNPM_ROOTS = {"6": (), "9": ("importers", ".")}
+
+def _pnpm_locked_next(text, lockname, mgr):
+    # ponytail: the ROOT importer only. Ceiling: a pnpm workspace that declares
+    # `next` in a package rather than at the root reads as "pins no next
+    # version", i.e. fails closed rather than passing unverified. Workspaces are
+    # quality-kit#7 part 5 and change where package.json and the test glob live
+    # too, so they are one change, not a special case bolted on here.
+    # pnpm quotes the value (`lockfileVersion: '9.0'`); strip the quotes before
+    # reporting it, or the message reads `lockfileVersion "'9.0'"`.
+    ver = str(_yaml_scalar(text, ("lockfileVersion",)) or "").strip().strip("'\"")
+    major = ver.split(".")[0]
+    if major not in PNPM_ROOTS:
+        err(f"profile=nextjs cannot verify the next >= {'.'.join(map(str, NEXT_FLOOR))} floor: {lockname} declares lockfileVersion {ver!r}, a schema this gate does not know how to read (it reads 6 and 9). It refuses to guess — a version read out of a shape it does not understand is worse than no check. Regenerate the lockfile with a pnpm whose format the kit supports (pnpm 8 writes 6; pnpm 9-11 write 9), or raise Myceliq/quality-kit#7 to teach the gate the new schema")
+        return None
+    for section in ("dependencies", "devDependencies", "optionalDependencies"):
+        got = _yaml_scalar(text, PNPM_ROOTS[major] + (section, "next", "version"))
+        if got:
+            # pnpm suffixes a resolution with the peers it was made against —
+            # `16.3.1(react@19.2.0)`. The suffix is provenance, not version.
+            return got.strip("'\"").split("(")[0].strip()
+    err(f"profile=nextjs but {lockname} pins no next version for the root package — run {mgr['refresh']} to refresh the lockfile, then commit it")
+    return None
+
+def _npm_locked_next(text, lockname, mgr):
+    lk = json.loads(text)
+    # lockfileVersion 2/3 key packages by install path; v1 used a flat map.
+    entry = lk.get("packages", {}).get("node_modules/next") or lk.get("dependencies", {}).get("next")
+    got = entry.get("version") if isinstance(entry, dict) else None
+    if not got:
+        err(f"profile=nextjs but {lockname} pins no next version — run {mgr['refresh']} to refresh the lockfile, then commit it")
+        return None
+    return got
+
 def check_next_floor():
     # next < 16.3.1 SEGFAULTS during `next build` under CI=1 against the kit's
     # pinned typescript@7. Measured on booking-platform, same commit, only the
@@ -165,27 +272,30 @@ def check_next_floor():
     #   - No diagnostic where it lands. Vercel's log ends at "Command
     #     npm run build exited with 1" — nothing names TypeScript, Next, or a
     #     signal. So this message carries the explanation the crash lacks.
-    # The LOCKFILE is the ground truth, not package.json: `npm ci` installs
-    # exactly the lockfile, and a range like ^16.2.4 says nothing about which
-    # version CI actually resolves.
-    lock = os.path.join(repo, "package-lock.json")
+    # The LOCKFILE is the ground truth, not package.json: the stamped workflow
+    # installs exactly the lockfile, and a range like ^16.2.4 says nothing about
+    # which version CI actually resolves. That is also why pnpm gets a real
+    # pnpm-lock.yaml reader below rather than a fallback to the package.json
+    # range — the fallback would be precisely the defect this check exists to
+    # avoid, just spelled differently (#7).
+    mgr = MANAGERS[manager]
+    lockname = mgr["lock"]
+    lock = os.path.join(repo, lockname)
     if not os.path.exists(lock):
-        err(f"profile=nextjs cannot verify the next >= {'.'.join(map(str, NEXT_FLOOR))} floor without package-lock.json — commit the lockfile (quality.yml runs `npm ci`, which requires one regardless)")
+        err(f"profile=nextjs cannot verify the next >= {'.'.join(map(str, NEXT_FLOOR))} floor without {lockname} — commit the lockfile (quality.yml runs `{mgr['install']}`, which requires one regardless)")
         return
-    lk = json.load(open(lock))
-    # lockfileVersion 2/3 key packages by install path; v1 used a flat map.
-    entry = lk.get("packages", {}).get("node_modules/next") or lk.get("dependencies", {}).get("next")
-    if not entry or not entry.get("version"):
-        err("profile=nextjs but package-lock.json pins no next version — run npm install to refresh the lockfile, then commit it")
-        return
-    got = entry["version"]
+    text = open(lock, encoding="utf-8", errors="ignore").read()
+    read = _pnpm_locked_next if manager == "pnpm" else _npm_locked_next
+    got = read(text, lockname, mgr)
+    if not got:
+        return          # the reader named its own remedy
     try:
         below = _semver(got) < _semver(".".join(map(str, NEXT_FLOOR)))
     except ValueError:
-        err(f"cannot parse the locked next version {got!r} — refresh package-lock.json with npm install")
+        err(f"cannot parse the locked next version {got!r} — refresh {lockname} with {mgr['refresh']}")
         return
     if below:
-        err(f"next {got} is below the required {'.'.join(map(str, NEXT_FLOOR))} — it SEGFAULTS in `next build` under CI=1 against the kit's pinned typescript@7 (exit 139/134, no diagnostic in the build log), while a local build silently installs its own TypeScript and passes. Run: npm install next@latest, then commit package-lock.json. See README 'Stamping a repo — known gotchas'")
+        err(f"next {got} is below the required {'.'.join(map(str, NEXT_FLOOR))} — it SEGFAULTS in `next build` under CI=1 against the kit's pinned typescript@7 (exit 139/134, no diagnostic in the build log), while a local build silently installs its own TypeScript and passes. Run: {mgr['bump']}, then commit {lockname}. See README 'Stamping a repo — known gotchas'")
 
 def _clause_floor(c):
     # Lowest version one npm comparator admits: a 3-tuple, or None when the

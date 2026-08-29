@@ -187,18 +187,35 @@ re-stamp byte-exact.
 Hit during the mentzer-method pilot (Wave 1). Check these before opening the
 stamp PR — most of them BLOCK a green stamp.
 
-- **The kit is npm-only, and `stamp.sh` now refuses anything else.**
-  `.github/workflows/quality.yml` runs `npm ci` with a `cache: 'npm'` key, and
-  `check-drift.sh` verifies the `next` floor from `package-lock.json` and fails
-  closed without one. So a pnpm repo used to stamp *successfully* and receive CI
-  that cannot install plus a drift gate permanently red on a file it will never
-  have. The stamper now detects the manager — from the lockfile, and from a
-  declared `packageManager` — and exits `78` before writing anything rather than
-  shipping that. Two conflicting signals are refused as ambiguous rather than
-  resolved. A repo with no signal at all still stamps, since stamping before the
-  first install reconcile is a normal flow. Real pnpm support is
-  [#7](https://github.com/Myceliq/quality-kit/issues/7); `yarn` is deliberately
-  out of scope.
+- **The kit stamps npm and pnpm, one per repo, and refuses everything else.**
+  The stamped workflow hardcodes an install command and a `setup-node` cache key,
+  and `check-drift.sh` verifies the `next` floor from *that manager's* lockfile,
+  failing closed without one — so the manager has to be decided before anything
+  is written. `bin/detect-manager.sh` decides it, and both `stamp.sh` and
+  `check-drift.sh` call it, so the writer and the gate cannot disagree. The
+  lockfile is the signal that matters (it is what CI installs); a declared
+  `packageManager` only ever *adds* a signal, for a repo whose first lockfile is
+  not committed yet. Two signals is ambiguous and is refused (`exit 78` from the
+  stamper, a `DRIFT` line from the gate) rather than resolved — delete the
+  lockfile for the manager the repo does not install. `yarn` and `bun` are
+  deliberately out of scope and refused by name, never treated as npm. A repo
+  with no signal at all still stamps as npm, since stamping before the first
+  install reconcile is a normal flow.
+- **A pnpm repo has to pin its pnpm when it is still on the old lockfile.**
+  `quality.pnpm.yml` runs `corepack enable pnpm`, and corepack takes the version
+  from `packageManager` when the repo declares one and otherwise resolves
+  `latest`. pnpm ≥ 9 **refuses** a `lockfileVersion: '6.0'` lockfile outright
+  (`ERR_PNPM_LOCKFILE_BREAKING_CHANGE` — measured, pnpm 11.9.0 against a lockfile
+  written by pnpm 8.15.9), so a repo still on the pnpm 8 format must declare
+  `"packageManager": "pnpm@8.x"` or CI resolves a pnpm that cannot read its own
+  lockfile. The drift gate reads both generations; the workflow can only run one.
+  Stamping the `packageManager` field is
+  [#7](https://github.com/Myceliq/quality-kit/issues/7) part 4.
+- **pnpm workspaces are not supported yet.** The floor check reads the ROOT
+  importer, so a workspace that declares `next` in a package rather than at the
+  root fails closed with "pins no next version". That is
+  [#7](https://github.com/Myceliq/quality-kit/issues/7) part 5, which also moves
+  where `package.json` and the test glob live.
 - **The stamped `.codex/hooks.json` does not run until Codex trusts the repo.**
   Both of Codex's trust gates skip hooks silently, so the stamp looks complete
   while the turn-end gate is off. See "The stamped Codex hooks" above.
@@ -223,9 +240,12 @@ stamp PR — most of them BLOCK a green stamp.
   and it type-checks with TS7). Both halves of the failure are invisible: a local
   build sees TS7 as missing, quietly `npm install`s its own TypeScript and goes
   green, while the CI log ends at `Command "npm run build" exited with 1` naming
-  neither TypeScript nor a signal. Fix with `npm install next@latest` and commit
-  the lockfile. The gate reads `package-lock.json`, not the `package.json` range —
-  `npm ci` installs the lock, so a conforming `^16.3.1` over a stale lock still
+  neither TypeScript nor a signal. Fix with `npm install next@latest` (`pnpm add
+  next@latest`) and commit the lockfile. The gate reads the LOCKFILE, not the
+  `package.json` range — `package-lock.json` on npm, `pnpm-lock.yaml` on pnpm
+  (`lockfileVersion` 6 and 9, and it fails closed on any other schema rather than
+  guessing). The install command installs the lock, so a conforming `^16.3.1`
+  over a stale lock still
   ships the segfault. Do **not** reach for `typescript: { ignoreBuildErrors: true }`:
   on a current Next it suppresses a check that works.
 - **The ts profiles floor Node at 22.12.0, and the drift gate enforces it.**
