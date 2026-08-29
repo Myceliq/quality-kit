@@ -219,11 +219,13 @@ else
   echo "SKIP python first-stamp ordering (no ruff/uvx available)"
 fi
 
-# --- an unsupported package manager must not produce a green stamp (#7) -------
-# quality.yml runs `npm ci` and check-drift reads package-lock.json, so a pnpm repo
-# used to stamp SUCCESSFULLY and receive CI that cannot install plus a drift gate
-# red on a file it will never have. Each case asserts the refusal AND that nothing
-# was written — a half-stamped repo is its own problem.
+# --- the stamped workflow must match the repo's real package manager (#7) -----
+# The workflow hardcodes an install command and a setup-node cache key, and
+# check-drift reads that manager's lockfile, so stamping the wrong variant hands
+# back CI that cannot install plus a drift gate red on a file the repo will never
+# have. npm and pnpm each get their own variant; everything else is refused, and
+# each refusal case asserts that NOTHING was written — a half-stamped repo is its
+# own problem.
 pm_repo() { # pm_repo <lockfiles> [package.json contents]
   local r; r="$(mktemp -d)"
   (
@@ -251,7 +253,18 @@ refuses() { # refuses <name> <repo> <expected-substring>
   fi
 }
 
-refuses "pnpm repo is refused, not silently stamped as npm" "$(pm_repo pnpm-lock.yaml)" 'detected \[pnpm\]'
+stamps_variant() { # stamps_variant <name> <repo> <ts/quality.*.yml>
+  local name="$1" repo="$2" want="$3" rc=0
+  bash "$S" "$repo" --profile nextjs >/dev/null 2>&1 || rc=$?
+  if [ "$rc" != 0 ]; then
+    bad "$name" "stamp refused a supported repo (exit $rc)"
+  elif ! cmp -s "$(dirname "$S")/../$want" "$repo/.github/workflows/quality.yml"; then
+    bad "$name" "stamped workflow is not $want"
+  else
+    ok "$name"
+  fi
+}
+
 refuses "yarn repo is refused (out of scope, not treated as npm)" "$(pm_repo yarn.lock)" 'detected \[yarn\]'
 refuses "bun repo is refused" "$(pm_repo bun.lockb)" 'detected \[bun\]'
 
@@ -260,20 +273,35 @@ refuses "bun repo is refused" "$(pm_repo bun.lockb)" 'detected \[bun\]'
 refuses "two lockfiles are ambiguous and refused, not resolved" \
   "$(pm_repo 'package-lock.json pnpm-lock.yaml')" 'detected \[npm pnpm\]'
 
-# A declared manager is positive evidence even before its lockfile is committed —
-# otherwise a fresh pnpm repo looks like a bare repo and sails through.
-refuses "a declared packageManager is honoured without a lockfile" \
-  "$(pm_repo '' '{"name":"pm","packageManager":"pnpm@9.1.0"}')" 'detected \[pnpm\]'
-
 # ...and a declaration contradicting the lockfile is ambiguous, not resolved either way.
 refuses "a packageManager contradicting the lockfile is refused" \
   "$(pm_repo package-lock.json '{"name":"pm","packageManager":"pnpm@9.1.0"}')" 'detected \[npm pnpm\]'
 
-# The other direction, or the refusal is a repo-wide outage rather than a guard.
-NPMR="$(pm_repo package-lock.json)"
-bash "$S" "$NPMR" --profile nextjs >/dev/null 2>&1 \
-  && [ -f "$NPMR/.github/workflows/quality.yml" ] \
-  && ok "an npm repo still stamps" || bad "an npm repo still stamps" "refused a supported repo"
+# Each supported manager gets ITS OWN workflow, byte-for-byte. Asserting the
+# stamp merely succeeded would pass while every pnpm repo received `npm ci`,
+# which is the whole of #7.
+stamps_variant "an npm repo is stamped with the npm workflow" \
+  "$(pm_repo package-lock.json)" ts/quality.npm.yml
+stamps_variant "a pnpm repo is stamped with the pnpm workflow, not npm's" \
+  "$(pm_repo pnpm-lock.yaml)" ts/quality.pnpm.yml
+
+# A declared manager is the only signal a repo has before its first lockfile is
+# committed — otherwise a fresh pnpm repo looks like a bare repo and gets npm CI.
+stamps_variant "a declared packageManager picks the variant without a lockfile" \
+  "$(pm_repo '' '{"name":"pm","packageManager":"pnpm@9.1.0"}')" ts/quality.pnpm.yml
+
+# The two workflow variants are byte-owned COPIES, so they drift silently: a
+# checkout SHA bumped in one and not the other is a version skew nobody sees
+# until a stamped repo's CI behaves differently from its neighbour's. Strip the
+# comments, the blank lines and the manager-specific lines (`npm` also matches
+# `pnpm`), and what is left must be identical.
+qy_common() { grep -viE 'npm|corepack|cache:' "$1" | grep -vE '^\s*(#|$)' || true; }
+if [ "$(qy_common "$(dirname "$S")/../ts/quality.npm.yml")" = "$(qy_common "$(dirname "$S")/../ts/quality.pnpm.yml")" ]; then
+  ok "the npm and pnpm workflows differ only in manager-specific lines"
+else
+  bad "the npm and pnpm workflows differ only in manager-specific lines" \
+    "$(diff <(qy_common "$(dirname "$S")/../ts/quality.npm.yml") <(qy_common "$(dirname "$S")/../ts/quality.pnpm.yml") || true)"
+fi
 
 # No signal at all stays allowed on purpose: stamping before the first install
 # reconcile is an existing flow, and refusing it would break re-stamps for the two

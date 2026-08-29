@@ -1,5 +1,12 @@
 ##
-# quality-kit stamped workflow — do not edit in the repo; change the kit.
+# quality-kit stamped workflow, npm variant — do not edit in the repo; change
+# the kit. stamp.sh picks this or quality.pnpm.yml from the detected manager,
+# and check-drift.sh compares against the same one, so a repo cannot end up
+# carrying CI for a manager it does not use.
+# KEEP IN SYNC with quality.pnpm.yml: the two files must differ ONLY in the
+# manager-specific lines (the install step and the setup-node cache key), and
+# bin/stamp.test.sh fails the kit's own CI if they ever differ anywhere else —
+# two byte-owned copies drift silently otherwise.
 # Drift gate first (cheap, unforgeable), then the exact same `validate`
 # command agents run locally. Spec: cockpit docs/specs/2026-07-17-*.md (private).
 ##
