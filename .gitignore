@@ -1,0 +1,3 @@
+# Local review/telemetry artefacts written by the factory tooling into any
+# checkout it reviews. Not part of the kit and never stamped into a repo.
+.harness/

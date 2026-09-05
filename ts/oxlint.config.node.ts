@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 
 // quality-kit stamped file — do not edit in the repo; change the kit instead.
 import { defineConfig } from "oxlint";
+import type { DummyRuleMap } from "oxlint";
 import core from "ultracite/oxlint/core";
 
 // Repo-specific overrides, declared once in .quality-kit.json and self-applied
@@ -29,15 +30,46 @@ try {
     throw error;
   }
 }
+// Rules this config sets itself, kept in a const so `configured` below sees
+// them too — otherwise a severity override would strip THEIR options, which is
+// the very bug `at()` exists to prevent.
+const local = {
+  // Keep the rule for `return undefined` / `x = undefined`, but stop it
+  // stripping type-REQUIRED argument undefineds — e.g. Vitest 4's
+  // `mockResolvedValue(undefined)`, where removing the arg is a type error.
+  "unicorn/no-useless-undefined": ["error", { checkArguments: false }],
+} satisfies DummyRuleMap;
+// The severity overrides below re-declare a rule, and a re-declaration REPLACES
+// the fleet's entry rather than merging into it. Written as a bare level it
+// therefore also discarded the rule's OPTIONS, reverting it to its plugin
+// defaults — which for an option-carrying rule is a materially different rule.
+// `unicorn/text-encoding-identifier-case` is `["error", { withDash: true }]`
+// fleet-wide (prefer `utf-8`); collapsed to `"warn"` it enforced the plugin
+// default, the OPPOSITE spelling. Every stamped repo therefore counted the
+// inverse violations into `burnDown` and enforced a rule nobody chose. Read the
+// configured entry and swap only element 0, so the options survive.
+const configured: Record<string, unknown> = {
+  ...core.rules,
+  ...local,
+};
+// A predicate, not `Array.isArray` inline: narrowing an `unknown` with the
+// built-in yields `any[]`, and spreading that is an unsafe-assignment the fleet
+// ruleset counts against every stamped repo. This config is linted BY the repos
+// it is stamped into, so a violation here is charged to all of them.
+const isTuple = (v: unknown): v is unknown[] => Array.isArray(v);
+const at = (level: string, rule: string) => {
+  const entry = configured[rule];
+  return isTuple(entry) ? [level, ...entry.slice(1)] : level;
+};
 // burn-down stays at `warn`: switching it off would hide the very violations
 // the drift ratchet has to count.
 const burnDown = Object.fromEntries(
-  Object.keys(qk.ruleOverrides?.burnDown ?? {}).map((r) => [r, "warn"])
+  Object.keys(qk.ruleOverrides?.burnDown ?? {}).map((r) => [r, at("warn", r)])
 );
 const permanent = Object.fromEntries(
   Object.entries(qk.ruleOverrides?.permanent ?? {}).map(([r, v]) => [
     r,
-    v.level,
+    at(v.level, r),
   ])
 );
 
@@ -55,10 +87,7 @@ export default defineConfig({
     ...(qk.ignoreOverrides ?? []),
   ],
   rules: {
-    // Keep the rule for `return undefined` / `x = undefined`, but stop it
-    // stripping type-REQUIRED argument undefineds — e.g. Vitest 4's
-    // `mockResolvedValue(undefined)`, where removing the arg is a type error.
-    "unicorn/no-useless-undefined": ["error", { checkArguments: false }],
+    ...local,
     ...burnDown,
     ...permanent,
   },
