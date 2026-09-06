@@ -67,10 +67,25 @@ later commit: doing that would leave the repo unable to commit anything without
 `--no-verify`, and a gate people switch off is worse than the defect.
 
 The kit is installed by copying, so the hook looks for the script in its sibling
-`bin/` and then beside itself. In **neither** place, the commit still proceeds
-and the hook prints `[staged-integrity] NOT INSTALLED`: one uncopied file must
-not freeze every commit on a box, but a gate that is silently absent is the
-failure mode this whole hook is written against, so it says so.
+`bin/` and then beside itself. In **neither** place the commit still proceeds by
+default — one uncopied file must not freeze every commit on a box — but the skip
+is reported the same machine-readable way an ungated review is:
+
+    [staged-integrity] PREFLIGHT_SKIPPED reason=preflight_missing
+
+and one row lands in the same `gate-skips.log`, same five columns, under a third
+class: `install_failure`. It is deliberately **not** a `GATE_SKIPPED` reason.
+Every reason that emitter takes means *this commit was not reviewed* — it says so
+on the way past — and here the reviewer runs normally, so filing it there would
+put "never reviewed" rows in the log for commits that were, and counting those
+rows is the whole point of the log. One schema to census, its own class so
+neither existing query picks it up by accident.
+
+`REVIEW_HOOK_REQUIRE_GATE=1`, or `"requireGate": true` in `.quality-kit.json`,
+refuses such a commit — before `validate:fast` and before the reviewer. A
+preflight that is not installed is not a blip: it recurs on every commit until
+someone copies the file, the same shape as `sandbox_init` and the opposite of an
+unreviewable diff.
 
 ### When the review does not run
 

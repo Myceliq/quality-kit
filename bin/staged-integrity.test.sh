@@ -369,17 +369,63 @@ rc=0; run_hook "$R" "$HOOK" || rc=$?
   && ok "an unstamped repo is not gated by the preflight" \
   || bad "an unstamped repo is not gated by the preflight" "rc=$rc $HOOK_OUT"
 
-# A stamped repo whose kit checkout has no staged-integrity.sh must still commit,
-# and must say the gate did not run — a global hook that freezes every commit
-# because one file was not copied is worse than the defects it screens for, and a
-# gate that is silently absent is the failure this whole hook is written against.
+# A stamped repo whose kit checkout has no staged-integrity.sh must still commit —
+# a global hook that freezes every commit because one file was not copied is worse
+# than the defects it screens for — but the skip has to be MACHINE-readable, or it
+# is the human-readable sentence nobody reads in an agent-driven repo, which is the
+# failure the GATE_SKIPPED contract was added to end.
 MISSING_KIT="$T/kit-without-script"; mkdir -p "$MISSING_KIT/hooks" "$MISSING_KIT/bin"
 cp "$HOOK" "$MISSING_KIT/hooks/git-pre-commit"
+SKIPLOG="$T/state/quality-kit/gate-skips.log"
+
 R="$(stamped_repo)"; printf 'a\n<<<<<<< HEAD\nb\n' > "$R/conflict.txt"; git -C "$R" add conflict.txt
 rc=0; run_hook "$R" "$MISSING_KIT/hooks/git-pre-commit" || rc=$?
-{ [ "$rc" = 0 ] && printf '%s' "$HOOK_OUT" | grep -q "NOT INSTALLED"; } \
-  && ok "a missing preflight script announces itself and does not freeze commits" \
-  || bad "a missing preflight script announces itself and does not freeze commits" "rc=$rc $HOOK_OUT"
+{ [ "$rc" = 0 ] && printf '%s' "$HOOK_OUT" | grep -q "PREFLIGHT_SKIPPED reason=preflight_missing"; } \
+  && ok "a missing preflight emits the machine-readable skip and does not freeze commits" \
+  || bad "a missing preflight emits the machine-readable skip and does not freeze commits" "rc=$rc $HOOK_OUT"
+
+# Same log, same five columns, its own class — a census is only possible with one
+# schema, and `install_failure` keeps this row out of both existing queries. It is
+# not the LAST row: the fake reviewer writes nothing, so the review gate files its
+# own empty_output skip underneath, which is the two records staying distinguishable.
+grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z[[:space:]]+preflight_missing[[:space:]].*install_failure$' \
+  "$SKIPLOG" 2>/dev/null \
+  && ok "the preflight skip lands in gate-skips.log with its own reason and class" \
+  || bad "the preflight skip lands in gate-skips.log with its own reason and class" \
+         "log tail: $(tail -n 2 "$SKIPLOG" 2>/dev/null || echo MISSING)"
+
+# ...and it must NOT masquerade as an unreviewed commit. The reviewer ran here, so
+# filing this as a GATE_SKIPPED would put a "never reviewed" row in the log for a
+# commit that WAS reviewed — exactly what that log is counted for.
+if printf '%s' "$HOOK_OUT" | grep -q "GATE_SKIPPED reason=preflight_missing"; then
+  bad "a preflight skip is not filed as a review skip" "it emitted GATE_SKIPPED reason=preflight_missing"
+else
+  ok "a preflight skip is not filed as a review skip"
+fi
+[ -f "$R/.reviewer-log" ] \
+  && ok "the reviewer still runs when only the preflight is missing" \
+  || bad "the reviewer still runs when only the preflight is missing" "$HOOK_OUT"
+
+# A repo that declared it wants a real gate gets one. Not-installed is not a blip:
+# it recurs on every commit until someone copies the file — sandbox_init's shape,
+# not an unreviewable diff's — so strict mode refuses it, before the reviewer.
+R="$(stamped_repo)"; echo x > "$R/f.txt"; git -C "$R" add f.txt
+rc=0; run_hook "$R" "$MISSING_KIT/hooks/git-pre-commit" REVIEW_HOOK_REQUIRE_GATE=1 || rc=$?
+{ [ "$rc" != 0 ] && [ ! -f "$R/.reviewer-log" ] && [ ! -f "$R/.validate-fast-ran" ]; } \
+  && ok "REVIEW_HOOK_REQUIRE_GATE=1 refuses a commit whose preflight is missing" \
+  || bad "REVIEW_HOOK_REQUIRE_GATE=1 refuses a commit whose preflight is missing" \
+         "rc=$rc reviewer=$([ -f "$R/.reviewer-log" ] && echo yes || echo no) $HOOK_OUT"
+
+# The strict switch travels with the stamp, so a fresh clone or a CI runner that
+# never sourced anyone's profile refuses it too.
+R="$(stamped_repo)"
+printf '{"version":"0.1.0","profile":"python","runner":"make","pendingFlags":[],"requireGate":true}' \
+  > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+rc=0; run_hook "$R" "$MISSING_KIT/hooks/git-pre-commit" || rc=$?
+[ "$rc" != 0 ] \
+  && ok "requireGate in .quality-kit.json refuses a missing preflight too" \
+  || bad "requireGate in .quality-kit.json refuses a missing preflight too" "rc=$rc $HOOK_OUT"
 
 SUITE_COMPLETED=1
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

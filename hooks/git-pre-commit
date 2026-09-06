@@ -135,6 +135,68 @@ codex_verdict() {
 # Sourced by the test suite to reach codex_verdict() without running the gate.
 if [ -n "$(review_hook_knob LIB_ONLY '')" ]; then return 0 2>/dev/null || exit 0; fi
 
+# --- skip accounting, shared by the deterministic preflight and the review gate ---
+# Hoisted above the deterministic block below because that block runs FIRST and has to
+# be able to report its own skip; a function defined further down does not exist yet
+# when it is called. QK_ROOT comes with them: require_gate_from_stamp() reads it.
+QK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+
+# The strict switch travels with the stamp, not just the environment: a repo that must not
+# accept ungated commits should keep saying so after a fresh clone, a new machine, or a CI
+# runner that never sourced anyone's shell profile. An explicit env var still wins, so a
+# one-off `REVIEW_HOOK_REQUIRE_GATE=0 git commit` remains possible.
+require_gate_from_stamp() {
+  [ -n "${QK_ROOT:-}" ] && [ -f "$QK_ROOT/.quality-kit.json" ] || { printf '0'; return; }
+  python3 -c "import json,sys;print('1' if json.load(open(sys.argv[1])).get('requireGate') else '0')" \
+    "$QK_ROOT/.quality-kit.json" 2>/dev/null || printf '0'
+}
+
+REVIEW_HOOK_REQUIRE_GATE=$(review_hook_knob REQUIRE_GATE "$(require_gate_from_stamp)")
+
+# One writer, one schema, so a census over this log is possible at all.
+# Best-effort, always. A gate that blocks commits because its own state directory is
+# unwritable is worse than the problem it measures.
+# `set -u` is active, so a bare $HOME fallback ABORTS the hook where HOME is unset — a minimal
+# CI image or a sanitized git environment — and every skipped check would then block the
+# commit, in the documented fail-open default. Derive the root guarded, and simply do not log
+# when there is nowhere to log to.
+skip_log_append() { # $1=reason  $2=class
+  local state_root="${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}"
+  [ -n "$state_root" ] || return 0
+  local log_dir="${state_root}/quality-kit"
+  local repo branch
+  repo=$(git rev-parse --show-toplevel 2>/dev/null) || repo="unknown"
+  branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch="unknown"
+  mkdir -p "$log_dir" 2>/dev/null || true
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$repo" "$branch" "$2" \
+    >>"${log_dir}/gate-skips.log" 2>/dev/null || true
+}
+
+# What:  the deterministic preflight's counterpart to gate_skipped().
+# Why:   NOT a new reason on gate_skipped, deliberately. Every reason that function takes means
+#        "this commit was not reviewed" — it says so on the way past, and under strict mode it
+#        blocks with "the review gate did not run". A missing preflight means nothing of the sort:
+#        codex is about to run normally. Filing it as a GATE_SKIPPED would put rows claiming
+#        unreviewed commits into the log for commits that were reviewed, and counting those rows
+#        is the entire reason the log exists. Same log and same five columns — one census, one
+#        schema — with its own marker, its own reason and a third class value, so neither existing
+#        query picks it up by accident.
+#        Strict mode DOES refuse it: a preflight that is not installed is not a blip, it recurs on
+#        every commit until someone copies the file, and a repo carrying requireGate has said it
+#        does not accept ungated commits. Same shape as sandbox_init, opposite of a structural skip.
+preflight_skipped() {
+  local reason="$1"
+  echo "[staged-integrity] PREFLIGHT_SKIPPED reason=${reason}"
+  skip_log_append "$reason" "install_failure"
+  if [ "$REVIEW_HOOK_REQUIRE_GATE" = "1" ]; then
+    echo "[staged-integrity] BLOCKED — REVIEW_HOOK_REQUIRE_GATE=1 and the staged-index preflight did not run (${reason})."
+    echo "[staged-integrity] This repo requires a real gate. Install the preflight beside the hook,"
+    echo "[staged-integrity] or unset the variable to accept a commit whose index was never checked."
+    exit 1
+  fi
+  echo "[staged-integrity] Proceeding without the staged-index preflight."
+}
+
 # --- Dependency justification check (advisory; set DEP_JUSTIFICATION_ENFORCE=1 to hard-block) ---
 # Runs before the Codex review so dep-related issues surface early.
 # Honors bypass tokens "deps:noop|cleanup|reorder" in the commit body.
@@ -148,7 +210,7 @@ fi
 # --- quality-kit validate:fast (generic; replaces per-repo hacks) ---
 # Cheap deterministic gate BEFORE the Codex review: a red validate:fast should
 # never spend a Codex call. Repos opt in by being stamped (.quality-kit.json).
-QK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+# QK_ROOT is computed above, with the skip accounting that reads it.
 if [ -n "$QK_ROOT" ] && [ -f "$QK_ROOT/.quality-kit.json" ]; then
   # Staged-index integrity, BEFORE validate:fast and therefore before any model
   # call. The profiles validate language code; nothing in them sees a conflict
@@ -157,10 +219,12 @@ if [ -n "$QK_ROOT" ] && [ -f "$QK_ROOT/.quality-kit.json" ]; then
   #
   # The kit is installed by copying, so the script is looked for beside the hook
   # as well as in its sibling bin/. When it is in NEITHER place the commit still
-  # proceeds — a global hook that blocks every commit on the box because one file
-  # was not copied is a worse outage than the defects it screens for — but it says
-  # so loudly, because a gate that is silently absent is the failure mode this
-  # whole file is written against.
+  # proceeds by default — a global hook that blocks every commit on the box because
+  # one file was not copied is a worse outage than the defects it screens for — but
+  # it goes through preflight_skipped(), so it is machine-readable, counted in the
+  # same log as every other skip, and refusable. A gate that is silently absent is
+  # the failure mode this whole file is written against, and a sentence nobody reads
+  # is how it stays silent.
   QK_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   QK_INTEGRITY=""
   for qk_cand in "$QK_HOOK_DIR/../bin/staged-integrity.sh" "$QK_HOOK_DIR/staged-integrity.sh"; do
@@ -174,7 +238,7 @@ if [ -n "$QK_ROOT" ] && [ -f "$QK_ROOT/.quality-kit.json" ]; then
     bash "$QK_INTEGRITY" || exit 1
   else
     echo "[staged-integrity] NOT INSTALLED — no staged-integrity.sh beside this hook or in ../bin." >&2
-    echo "[staged-integrity] The staged-index preflight did NOT run. Copy it next to the hook." >&2
+    preflight_skipped "preflight_missing"
   fi
 
   QK_RUNNER="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('runner','npm'))" "$QK_ROOT/.quality-kit.json" 2>/dev/null || echo npm)"
@@ -219,17 +283,9 @@ skip_reason_class() {
   esac
 }
 
-# The strict switch travels with the stamp, not just the environment: a repo that must not
-# accept ungated commits should keep saying so after a fresh clone, a new machine, or a CI
-# runner that never sourced anyone's shell profile. An explicit env var still wins, so a
-# one-off `REVIEW_HOOK_REQUIRE_GATE=0 git commit` remains possible.
-require_gate_from_stamp() {
-  [ -n "${QK_ROOT:-}" ] && [ -f "$QK_ROOT/.quality-kit.json" ] || { printf '0'; return; }
-  python3 -c "import json,sys;print('1' if json.load(open(sys.argv[1])).get('requireGate') else '0')" \
-    "$QK_ROOT/.quality-kit.json" 2>/dev/null || printf '0'
-}
-
-REVIEW_HOOK_REQUIRE_GATE=$(review_hook_knob REQUIRE_GATE "$(require_gate_from_stamp)")
+# require_gate_from_stamp() and REVIEW_HOOK_REQUIRE_GATE are defined near the top of the
+# file, with skip_log_append() and preflight_skipped(): the deterministic preflight runs
+# before this point and needs all of them.
 
 # What:  emit the machine-readable gate verdict, and honour REVIEW_HOOK_REQUIRE_GATE.
 # Where: EVERY path that reaches a commit without a completed review.
@@ -243,24 +299,7 @@ gate_skipped() {
   local class
   class=$(skip_reason_class "$reason")
   echo "[codex-hook] GATE_SKIPPED reason=${reason}"
-
-  # Best-effort, always. A gate that blocks commits because its own state directory is
-  # unwritable is worse than the problem it measures.
-  # `set -u` is active, so a bare $HOME fallback ABORTS the hook where HOME is unset — a minimal
-  # CI image or a sanitized git environment — and every skipped review would then block the
-  # commit, in the documented fail-open default. Derive the root guarded, and simply do not log
-  # when there is nowhere to log to.
-  local state_root="${XDG_STATE_HOME:-${HOME:+$HOME/.local/state}}"
-  if [ -n "$state_root" ]; then
-    local log_dir="${state_root}/quality-kit"
-    local log_file="${log_dir}/gate-skips.log"
-    local repo branch
-    repo=$(git rev-parse --show-toplevel 2>/dev/null) || repo="unknown"
-    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch="unknown"
-    mkdir -p "$log_dir" 2>/dev/null || true
-    printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$reason" "$repo" "$branch" \
-      "$class" >>"$log_file" 2>/dev/null || true
-  fi
+  skip_log_append "$reason" "$class"
 
   # Strict mode refuses an OUTAGE, not an unreviewable diff. Blocking a structural skip would
   # wedge legitimate work with no way out — there is no retry and no other reviewer that makes an
