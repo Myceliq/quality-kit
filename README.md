@@ -198,22 +198,48 @@ stamp PR — most of them BLOCK a green stamp.
   not committed yet. Two signals is ambiguous and is refused (`exit 78` from the
   stamper, a `DRIFT` line from the gate) rather than resolved — delete the
   lockfile for the manager the repo does not install. `yarn` and `bun` are
-  deliberately out of scope and refused by name, never treated as npm. A repo
-  with no signal at all still stamps as npm, since stamping before the first
-  install reconcile is a normal flow.
-- **A pnpm repo has to pin its pnpm when it is still on the old lockfile.**
-  `quality.pnpm.yml` runs `corepack enable pnpm`, and corepack takes the version
-  from `packageManager` when the repo declares one and otherwise resolves
-  `latest`. pnpm ≥ 9 **refuses** a `lockfileVersion: '6.0'` lockfile outright
-  (`ERR_PNPM_LOCKFILE_BREAKING_CHANGE` — measured, pnpm 11.9.0 against a lockfile
-  written by pnpm 8.15.9), so a repo still on the pnpm 8 format must declare an
-  **exact** pnpm 8 version — `"packageManager": "pnpm@8.15.9"` — or CI resolves a
-  pnpm that cannot read its own lockfile. Exact, not a range: corepack rejects
-  `pnpm@8.x` with `Invalid package manager specification in package.json
-  (pnpm@8.x); expected a semver version` (measured, corepack 0.35.0), which
-  would swap one red CI for another.
+  deliberately out of scope and refused by name, never treated as npm — and so is
+  a `packageManager` naming anything else at all (`deno@2.1.4`, or a mistyped,
+  empty or non-string value): it becomes an `unsupported:<name>` signal and is
+  refused under that name rather than read as silence. The prefix is what stops a
+  near-miss like `pnpm!@9.0.0` — which corepack cannot resolve — from being
+  cleaned up into the supported `pnpm`. **No evidence and evidence of the wrong manager are different cases.**
+  A repo with no lockfile and no declaration still stamps as npm, since stamping
+  before the first install reconcile is a normal flow; a repo that *declares* a
+  manager the kit does not serve can never produce a green stamp.
+- **A pnpm repo has to pin its pnpm when it is still on the old lockfile — and
+  the stamper enforces it.** `quality.pnpm.yml` runs `corepack enable pnpm`, and
+  corepack takes the version from `packageManager` when the repo declares one and
+  otherwise resolves `latest`. pnpm ≥ 9 **refuses** a `lockfileVersion: '6.0'`
+  lockfile outright (`ERR_PNPM_LOCKFILE_BREAKING_CHANGE` — measured, pnpm 11.9.0
+  against a lockfile written by pnpm 8.15.9), so a repo still on the pnpm 8 format
+  must declare an **exact** pnpm 8 version — `"packageManager": "pnpm@8.15.9"` —
+  or CI resolves a pnpm that cannot read its own lockfile. Exact, not a range:
+  corepack rejects `pnpm@8.x` with `Invalid package manager specification in
+  package.json (pnpm@8.x); expected a semver version` (measured, corepack 0.35.0),
+  which would swap one red CI for another. The `+sha512.…` integrity suffix
+  `corepack use` writes is accepted, and checked for a real algorithm and that
+  algorithm's exact digest length — corepack verifies the download against it, so
+  a truncated or mistyped one is one more guaranteed-red install. Copy it from
+  `corepack use pnpm@<version>` rather than typing it.
+  This was documented from the start and documentation is not a gate, so
+  `stamp.sh` now **refuses** (`exit 78`, before writing anything) a pnpm repo
+  whose committed files already make the install impossible, and names the
+  remedy. Scope, precisely: it checks the two things a stamp can check offline —
+  that the declaration is a spec corepack can parse, and that the pnpm it selects
+  owns the lockfile's generation. It does not prove the install *succeeds*: a
+  version that does not exist in the registry, or a well-formed but wrong
+  integrity digest, needs the tarball, and `stamp.sh` never leaves the box. Those
+  two fail loudly on the first CI run; the ones checked here failed silently, by
+  producing a green stamp. Both
+  directions, both measured: a `6.0` lockfile without an exact pnpm 8
+  declaration, and an exact pnpm 8 declaration against a `9.0` lockfile (pnpm 8
+  refuses that one just as hard). A generation the kit does not know — it knows 6
+  and 9 — is refused rather than guessed at, the same stance the drift gate takes
+  on an unrecognised schema. The alternative is a stamp that prints "stamped" and
+  hands back CI that cannot install, which is the whole of #7.
   The drift gate reads both generations; the workflow can only run one.
-  Stamping the `packageManager` field is
+  Writing the `packageManager` field for the repo is still
   [#7](https://github.com/Myceliq/quality-kit/issues/7) part 4.
 - **pnpm workspaces are not supported yet.** The floor check reads the ROOT
   importer, so a workspace that declares `next` in a package rather than at the

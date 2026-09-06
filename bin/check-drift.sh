@@ -37,7 +37,7 @@ if [ "$PROFILE" != python ]; then
     ""|"npm") MANAGER=npm ;;
     "pnpm")   MANAGER=pnpm ;;
     *)
-      echo "DRIFT: unsupported package manager: detected [$DETECTED] — this kit supports npm and pnpm, one per repo. Two detected means the lockfiles (or a packageManager field) disagree: delete the one for the manager this repo does not install, then re-stamp. yarn and bun are out of scope (Myceliq/quality-kit#7)" >&2
+      echo "DRIFT: unsupported package manager: detected [$DETECTED] — this kit supports npm and pnpm, one per repo. Two detected means the lockfiles (or a packageManager field) disagree: delete the one for the manager this repo does not install, then re-stamp. An 'unsupported:<name>' entry is a packageManager naming a manager the kit does not serve (or an unusable value, reported as unsupported:unnamed): fix or remove the field — it is refused under that name, never read as npm. yarn and bun are out of scope (Myceliq/quality-kit#7)" >&2
       exit 1
       ;;
   esac

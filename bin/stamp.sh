@@ -68,10 +68,165 @@ if [ "$PROFILE" != python ]; then
       echo "that is permanently red on a file the repo will never have." >&2
       echo "Two managers detected means the signals disagree — delete the lockfile (or" >&2
       echo "the packageManager field) for the manager this repo does not install." >&2
+      echo "An 'unsupported:<name>' entry is a packageManager naming a manager this kit" >&2
+      echo "does not serve (or an unusable value, reported as unsupported:unnamed) — it is" >&2
+      echo "refused under that name rather than read as npm. Fix or remove the field." >&2
       echo "Refusing rather than shipping broken CI. Tracking: Myceliq/quality-kit#7." >&2
       exit 78
       ;;
   esac
+fi
+
+# --- a pnpm stamp's CI must be able to READ the committed lockfile (#7) ------
+# What:  refuse a pnpm repo whose lockfile generation and CI pnpm cannot meet.
+# Where: still before ANY file is written, for the same reason as the block above.
+# Why:   picking quality.pnpm.yml is only half of "the repo can install". That
+#        workflow runs `corepack enable pnpm`, and corepack takes the version from
+#        package.json `packageManager` when the repo declares one and otherwise
+#        resolves `latest`. The lockfile generations are NOT interchangeable in
+#        either direction — both measured here, both exit 1 with
+#        ERR_PNPM_LOCKFILE_BREAKING_CHANGE:
+#          pnpm 11 (what `latest` resolves today) on a lockfileVersion 6.0 lockfile,
+#          pnpm 8.15.9 on a 9.0 one.
+#        So a repo still on the pnpm 8 format that declares nothing gets a stamp
+#        whose `pnpm install --frozen-lockfile` is guaranteed red: the stamp
+#        SUCCEEDS, prints "stamped", and hands back CI that cannot install, which
+#        is the failure #7 exists to end. The README documented the remedy from the
+#        start; documentation is not a gate.
+#        EXACT version, not a range: corepack rejects `pnpm@8.x` with "expected a
+#        semver version", so a range declaration is refused whether or not a
+#        lockfile is present — it fails the install step before the lockfile is
+#        even read. A `+sha` suffix (what `corepack use` writes) is kept and fine.
+# SCOPE:  what this proves is "nothing the repo has ALREADY committed makes the
+#        install impossible" — the two facts a stamp can check without leaving the
+#        box: the declaration is a spec corepack can parse, and the pnpm it selects
+#        owns the lockfile generation. It does NOT prove the install succeeds. A
+#        version that does not exist in the registry, and a well-formed digest that
+#        is simply the wrong one, both need the tarball, and stamp.sh is
+#        deliberately offline and deterministic (codex, round 8). Those two fail
+#        LOUDLY in CI on the first run and cannot go silently green, which is the
+#        class of failure #7 is about; the ones checked here could.
+# ponytail: the two generations the kit knows, 6 and 9 — the same closed set as
+#        check-drift.sh's PNPM_ROOTS, and unknown ones are refused there too. A
+#        third generation is one change that teaches both. Ceiling: a repo on a
+#        lockfile the kit has never seen cannot be stamped until it is taught.
+if [ "$MANAGER" = pnpm ]; then
+  python3 - "$REPO" <<'PY' || exit 78
+import json, os, re, sys
+repo = sys.argv[1]
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    print("Refusing rather than shipping CI that cannot install. "
+          "Tracking: Myceliq/quality-kit#7.", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    pm = json.load(open(os.path.join(repo, "package.json"))).get("packageManager")
+except Exception:
+    pm = None
+# NOT stripped. corepack does not trim the field — ` pnpm@8.15.9 ` (padded) gets
+# "Unsupported package manager specification" (measured, corepack 0.35.0) — so
+# normalising here would validate a string CI never sees (codex, round 7).
+pm = pm if isinstance(pm, str) else ""
+
+# Which pnpm major CI will run: the declared one, or None for corepack's `latest`.
+declared = None
+if pm.split("@")[0].strip() == "pnpm":
+    # The CONDITION mirrors detect-manager.sh's name rule exactly, .strip() and
+    # all, so every declaration the detector called pnpm is validated here. Read
+    # them apart and a declaration slips between the two: `pnpm @9.0.0` detects
+    # as pnpm, and under a stricter test here would skip validation entirely and
+    # stamp as if nothing were declared (codex, round 3).
+    # The CHECK is then the whole raw string, not a re-split or a trim of it — a
+    # spec corepack accepts has no stray whitespace anywhere in it, inside or
+    # around, and a bare "pnpm" with no version at all lands here too, which is
+    # the one place that can say so.
+    # The optional `+algo.hexdigest` suffix (what `corepack use` writes) is
+    # VALIDATED, not discarded: corepack parses it and verifies the download
+    # against it, so a malformed one is one more guaranteed-red install. The
+    # algorithm and the digest LENGTH are both checked, because a digest of the
+    # wrong length can never match whatever the tarball hashes to — `+sha512.abc`
+    # is not merely suspicious, it is impossible (codex, round 4). Measured
+    # rather than assumed: `corepack use pnpm@8.15.9` (corepack 0.35.0) writes
+    # `pnpm@8.15.9+sha512.<128 lowercase hex>`. Lowercase only, for the same
+    # reason — that is what corepack compares its own computed hex against.
+    # ponytail: shape only. Ceiling: this cannot tell a well-formed digest from
+    # the WRONG well-formed digest — that needs the tarball, and stamp.sh is
+    # deliberately offline and deterministic. CI catches a mismatched digest;
+    # this catches every malformed one, which is what a stamp can see.
+    # STRICT semver, not a loose \d+: corepack rejects `pnpm@09.0.0` and
+    # `pnpm@8.15.9-alpha.` with that same "expected a semver version" (both
+    # measured, corepack 0.35.0), so a looser pattern here would wave through a
+    # declaration CI cannot resolve (codex, round 5). Hence semver.org's own
+    # grammar — numeric identifiers carry no leading zero, and a prerelease
+    # identifier is never empty. Build metadata is deliberately absent: corepack
+    # spends the `+` on the integrity suffix below.
+    num = r"(?:0|[1-9]\d*)"
+    pre = rf"(?:{num}|\d*[A-Za-z-][0-9A-Za-z-]*)"
+    digests = {"sha1": 40, "sha224": 56, "sha256": 64, "sha384": 96, "sha512": 128}
+    suffix = "|".join(rf"{a}\.[0-9a-f]{{{n}}}" for a, n in digests.items())
+    m = re.fullmatch(
+        rf"pnpm@({num})\.{num}\.{num}(?:-{pre}(?:\.{pre})*)?(?:\+(?:{suffix}))?", pm)
+    if not m:
+        die(f'package.json declares "packageManager": "{pm}", which corepack cannot resolve: it '
+            'wants the exact form `pnpm@<semver>`, with no whitespace inside or around it '
+            '(` pnpm@8.15.9 ` gives "Unsupported package manager specification"), and it rejects '
+            'a range — `pnpm@8.x` gives "Invalid package manager specification in package.json '
+            '(pnpm@8.x); expected a semver version" (both measured, corepack 0.35.0). '
+            'The stamped workflow would then die in '
+            '`corepack enable pnpm` before it ever read the lockfile. Declare an exact version, '
+            'e.g. "packageManager": "pnpm@8.15.9" — optionally with the integrity suffix '
+            '`corepack use` writes, e.g. "pnpm@8.15.9+sha512.<128 lowercase hex chars>", which '
+            'corepack verifies the download against and therefore has to be well formed: a real '
+            'algorithm (sha1/224/256/384/512) and that algorithm\'s exact digest length. Copy it '
+            'from `corepack use pnpm@<version>` rather than typing it. Then re-stamp.')
+    declared = int(m.group(1))
+
+lock = os.path.join(repo, "pnpm-lock.yaml")
+if not os.path.exists(lock):
+    raise SystemExit(0)   # nothing to be incompatible with yet — the pre-reconcile flow
+
+# The generation is a top-level scalar pnpm writes on its own line, quoted
+# (`lockfileVersion: '9.0'`). Read it as a shape, not with a YAML parser: the kit
+# takes no runtime dependencies, and an unreadable value falls through to the
+# unknown-generation refusal below rather than being guessed at.
+m = re.search(r"^lockfileVersion:[ \t]*(.+?)[ \t]*$", open(lock, encoding="utf-8", errors="ignore").read(), re.M)
+gen = (m.group(1).strip("'\"") if m else "")
+# The WHOLE value has to be a version before its first component means anything:
+# reading the major out of `6.not-a-version` would accept a corrupt header as the
+# pnpm 8 format on the strength of one leading digit (codex, round 6). A value
+# that is not a dotted number has no major, so it falls into the
+# unknown-generation refusal below — which is where anything unreadable belongs.
+major = gen.split(".")[0] if re.fullmatch(r"\d+(?:\.\d+)*", gen) else ""
+
+if major not in ("6", "9"):
+    die(f"pnpm-lock.yaml declares lockfileVersion {gen!r}, a generation this kit does not know "
+        "(it knows 6 and 9), so it cannot tell which pnpm CI has to run to read it — and the "
+        "generations are not interchangeable, so guessing would ship a red install. Regenerate "
+        "the lockfile with a pnpm the kit supports (pnpm 8 writes 6; pnpm 9-11 write 9), or "
+        "raise Myceliq/quality-kit#7 to teach the kit the new schema.")
+
+if major == "6" and declared != 8:
+    die(f"pnpm-lock.yaml is lockfileVersion {gen} — the pnpm 8 format — but package.json "
+        f"declares {('no packageManager' if not pm else 'packageManager ' + pm)}. "
+        ".github/workflows/quality.yml runs `corepack enable pnpm`, which resolves `latest` "
+        "without a declaration, and pnpm >= 9 REFUSES a version 6 lockfile outright "
+        "(ERR_PNPM_LOCKFILE_BREAKING_CHANGE — measured, pnpm 11 against a lockfile written by "
+        "pnpm 8.15.9). Stamping would hand back CI whose `pnpm install --frozen-lockfile` is "
+        "guaranteed red. Pick one, then re-stamp:\n"
+        '  - keep this lockfile: add "packageManager": "pnpm@8.15.9" to package.json (an EXACT '
+        "version — corepack rejects a range like pnpm@8.x)\n"
+        "  - or migrate it: run `pnpm install --lockfile-only` under pnpm >= 9, which rewrites "
+        "pnpm-lock.yaml as lockfileVersion 9.0, and commit it")
+
+if major == "9" and declared is not None and declared < 9:
+    die(f'package.json declares "packageManager": "{pm}" but pnpm-lock.yaml is lockfileVersion '
+        f"{gen}, which pnpm 8 refuses to read (ERR_PNPM_LOCKFILE_BREAKING_CHANGE — measured, "
+        "pnpm 8.15.9 against a version 9 lockfile), so CI's `pnpm install --frozen-lockfile` is "
+        "guaranteed red. Raise the declaration to the pnpm that wrote this lockfile (e.g. "
+        '"pnpm@11.9.0"), or drop the field and let corepack resolve `latest`, then re-stamp.')
+PY
 fi
 
 # refuse to clobber locally-modified stamped files unless --force

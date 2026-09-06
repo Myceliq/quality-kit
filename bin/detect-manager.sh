@@ -22,6 +22,10 @@
 #       one piece of evidence a repo has before its first lockfile is committed,
 #       and it can never override a lockfile — a disagreement between them comes
 #       back as two signals, i.e. ambiguous, i.e. refused by both callers.
+#       A declaration naming a manager the kit does not serve is a signal too,
+#       emitted as `unsupported:<sanitised name>` so the callers refuse it by
+#       name and no sanitised value can ever come out looking supported.
+#       Silence there would be indistinguishable from no evidence, i.e. npm.
 set -euo pipefail
 REPO="${1:?usage: detect-manager.sh <repo>}"
 cd "$REPO"
@@ -35,13 +39,35 @@ DETECTED="$(
     python3 -c "
 import json, re, sys
 try:
-    pm = json.load(open('package.json')).get('packageManager')
+    d = json.load(open('package.json'))
 except Exception:
     sys.exit(0)
-if isinstance(pm, str):
-    m = re.match(r'([a-z]+)', pm.strip())
-    if m and m.group(1) in ('npm', 'pnpm', 'yarn', 'bun'):
-        print(m.group(1))
+if not isinstance(d, dict) or 'packageManager' not in d:
+    sys.exit(0)   # no declaration is no evidence, which is not an error
+pm = d['packageManager']
+name = pm.split('@')[0].strip() if isinstance(pm, str) else ''
+if name in ('npm', 'pnpm', 'yarn', 'bun'):
+    print(name)
+else:
+    # A declaration naming something else is positive evidence of a manager the
+    # kit does not serve, and it MUST become a signal. Printing nothing is what
+    # made a deno repo indistinguishable from a bare one: both callers read the
+    # empty output as 'no evidence' and default to npm, so the repo got a GREEN
+    # stamp carrying npm-ci CI — the exact silent-npm outcome #7's scope note
+    # forbids. As a signal it lands in the same '*)' arm as yarn and bun and is
+    # refused BY NAME.
+    # The 'unsupported:' prefix is load bearing, not decoration: the name is
+    # sanitised to [A-Za-z0-9._-] so the token can never carry a space (which
+    # would split the space-separated signal list) or a shell metacharacter, and
+    # sanitising ALONE can promote a rejected name into a supported one —
+    # 'pnpm!@9.0.0' sanitises to a bare 'pnpm', which would stamp the pnpm
+    # workflow for a declaration corepack cannot resolve (codex, round 2). The
+    # prefix makes that structurally impossible, since no supported value
+    # contains a colon. The match above is case-SENSITIVE, so 'Deno@2' and even
+    # 'PNPM@9' come through here rather than resolving — as corepack treats them.
+    # A value with no usable name at all ('', '@1.2.3', a non-string, null)
+    # still has to refuse rather than default, so it gets a placeholder name.
+    print('unsupported:' + (re.sub(r'[^A-Za-z0-9._-]', '', name)[:24] or 'unnamed'))
 "
   fi
   true

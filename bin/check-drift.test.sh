@@ -238,14 +238,17 @@ R="$(fresh_pnpm)"; cp "$KITROOT/ts/quality.npm.yml" "$R/.github/workflows/qualit
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*quality.yml diverges" && ok "pnpm repo carrying the npm workflow caught" || bad "pnpm repo carrying the npm workflow caught" "$out"
 
-R="$(fresh_pnpm 16.3.1 6.0)"
+# A generation-6 repo has to declare an exact pnpm 8, or stamp.sh refuses it: the
+# workflow's `corepack enable pnpm` would otherwise resolve a pnpm that cannot read
+# this lockfile. Same fixture as a real repo on the old format, therefore.
+R="$(fresh_pnpm 16.3.1 6.0 '"packageManager":"pnpm@8.15.9",')"
 run "$R" >/dev/null && ok "lockfileVersion 6 resolves the floor" || bad "lockfileVersion 6 resolves the floor" "$(run "$R" || true)"
 
 R="$(fresh_pnpm 16.2.4)"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*next 16.2.4 is below" && ok "pnpm-locked next below the floor caught (v9)" || bad "pnpm-locked next below the floor caught (v9)" "$out"
 
-R="$(fresh_pnpm 16.2.4 6.0)"
+R="$(fresh_pnpm 16.2.4 6.0 '"packageManager":"pnpm@8.15.9",')"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*next 16.2.4 is below" && ok "pnpm-locked next below the floor caught (v6)" || bad "pnpm-locked next below the floor caught (v6)" "$out"
 
@@ -294,6 +297,17 @@ echo "$out" | grep -q "DRIFT.*unsupported package manager: detected \[npm pnpm\]
 R="$(fresh)"; mv "$R/package-lock.json" "$R/yarn.lock"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*unsupported package manager: detected \[yarn\]" && ok "yarn alone is refused by the gate, not treated as npm" || bad "yarn alone is refused by the gate, not treated as npm" "$out"
+
+# ...and neither does a manager the kit has never heard of. The gate reads the same
+# detector as the stamper, so a declaration it emitted nothing for used to leave the
+# gate verifying a deno repo against npm's lockfile and workflow — silently.
+R="$(fresh)"; rm "$R/package-lock.json"
+python3 -c "
+import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['packageManager']='deno@2.1.4'; json.dump(d,open(p,'w'))" "$R/package.json"
+out="$(run "$R" || true)"
+echo "$out" | grep -q "DRIFT.*unsupported package manager: detected \[unsupported:deno\]" \
+  && ok "an unrecognised packageManager is refused by the gate, not read as npm" \
+  || bad "an unrecognised packageManager is refused by the gate, not read as npm" "$out"
 
 # --- I4: the Node floor (cockpit#87) ---
 # The kit's pinned toolchain floors Node at 22.12.0 (ultracite pulls

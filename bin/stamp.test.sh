@@ -226,14 +226,22 @@ fi
 # have. npm and pnpm each get their own variant; everything else is refused, and
 # each refusal case asserts that NOTHING was written — a half-stamped repo is its
 # own problem.
-pm_repo() { # pm_repo <lockfiles> [package.json contents]
+pm_repo() { # pm_repo <lockfiles> [package.json contents] [pnpm lockfileVersion]
   local r; r="$(mktemp -d)"
   (
     cd "$r"
     git init -q && git config core.hooksPath /dev/null
     printf '%s' "${2:-{\"name\":\"pm\"\}}" > package.json
     printf '{"compilerOptions":{"jsx":"preserve"}}' > tsconfig.json
-    for f in $1; do printf 'lock\n' > "$f"; done
+    # pnpm-lock.yaml gets a REAL generation header: stamp.sh has to know which
+    # pnpm can read it, so a placeholder file would exercise nothing but the
+    # unknown-generation refusal. Default 9.0 — what pnpm 9-11 write today.
+    for f in $1; do
+      case "$f" in
+        pnpm-lock.yaml) printf "lockfileVersion: '%s'\n" "${3:-9.0}" > "$f" ;;
+        *)              printf 'lock\n' > "$f" ;;
+      esac
+    done
     git add -A && git -c user.name=t -c user.email=t@t.local commit -q -m init
   ) >/dev/null
   echo "$r"
@@ -268,6 +276,30 @@ stamps_variant() { # stamps_variant <name> <repo> <ts/quality.*.yml>
 refuses "yarn repo is refused (out of scope, not treated as npm)" "$(pm_repo yarn.lock)" 'detected \[yarn\]'
 refuses "bun repo is refused" "$(pm_repo bun.lockb)" 'detected \[bun\]'
 
+# A declaration naming something the kit does not serve must REFUSE, not fall
+# through to npm. Emitting no signal for it made a deno repo look identical to a
+# bare one, so it got a green stamp carrying `npm ci` CI — the silent-npm
+# outcome #7's scope note forbids by name.
+refuses "an unrecognised packageManager is refused, not silently treated as npm" \
+  "$(pm_repo '' '{"name":"pm","packageManager":"deno@2.1.4"}')" 'detected \[unsupported:deno\]'
+# Case-sensitively: corepack does not resolve 'Deno' either, and a detector that
+# lowercased would eventually turn 'PNPM@9' into a supported manager by accident.
+refuses "a mixed-case unrecognised packageManager is refused" \
+  "$(pm_repo '' '{"name":"pm","packageManager":"Deno@2"}')" 'detected \[unsupported:Deno\]'
+# The signal is PREFIXED, and that is what makes sanitising safe: 'pnpm!@9.0.0' is
+# a name corepack cannot resolve, and stripping the '!' to make the token safe for
+# the signal list would otherwise promote it to a supported manager and stamp the
+# pnpm workflow for it (codex, round 2). No supported value contains a colon.
+refuses "a near-miss of a supported name is not sanitised INTO one" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm!@9.0.0"}')" 'detected \[pnpm unsupported:pnpm\]'
+# ...and a declaration with no usable name is still positive evidence of a broken
+# declaration. Defaulting it to npm is the same silent-npm bug wearing a
+# different value, so each of these refuses under a placeholder name.
+for bad_pm in '""' '"@1.2.3"' '{"name":"pnpm"}' 'null'; do
+  refuses "packageManager $bad_pm is refused rather than defaulting to npm" \
+    "$(pm_repo '' "{\"name\":\"pm\",\"packageManager\":$bad_pm}")" 'detected \[unsupported:unnamed\]'
+done
+
 # Two lockfiles is ambiguous. Picking one is how a repo gets CI for a manager it
 # does not use, so it fails closed rather than resolving.
 refuses "two lockfiles are ambiguous and refused, not resolved" \
@@ -290,6 +322,76 @@ stamps_variant "a pnpm repo is stamped with the pnpm workflow, not npm's" \
 stamps_variant "a declared packageManager picks the variant without a lockfile" \
   "$(pm_repo '' '{"name":"pm","packageManager":"pnpm@9.1.0"}')" ts/quality.pnpm.yml
 
+# --- the stamped pnpm CI must be able to READ the committed lockfile (#7) -----
+# quality.pnpm.yml runs `corepack enable pnpm`, which resolves `latest` unless the
+# repo declares an exact version. The lockfile generations are not interchangeable
+# in EITHER direction (both measured, both ERR_PNPM_LOCKFILE_BREAKING_CHANGE: pnpm
+# 11 on a 6.0 lockfile, pnpm 8.15.9 on a 9.0 one), so a stamp that ignores the
+# generation succeeds and hands back CI that cannot install — #7's own failure.
+refuses "a generation-6 pnpm lockfile with no packageManager is refused" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm"}' 6.0)" 'ERR_PNPM_LOCKFILE_BREAKING_CHANGE'
+# the refusal has to carry the remedy, not just the diagnosis — an operator (or a
+# repair-loop agent) that is told only "refused" reaches for --force next
+refuses "the generation-6 refusal names the exact pnpm 8 remedy" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm"}' 6.0)" 'pnpm@8.15.9'
+stamps_variant "a generation-6 lockfile with an exact pnpm 8 declaration stamps" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm@8.15.9"}' 6.0)" ts/quality.pnpm.yml
+# corepack rejects a RANGE outright ("expected a semver version", corepack 0.35.0),
+# so `pnpm@8.x` is not a lesser form of the remedy above — it is a second red CI.
+refuses "a range packageManager is refused (corepack wants an exact version)" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm@8.x"}' 6.0)" 'expected a semver version'
+# the mirror: pnpm 8 cannot read a generation-9 lockfile either, so a stale pin
+# left behind by a lockfile migration is equally guaranteed-red CI
+refuses "an exact pnpm 8 declaration against a generation-9 lockfile is refused" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm@8.15.9"}' 9.0)" 'refuses to read'
+stamps_variant "a generation-9 lockfile stamps with no declaration needed" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm"}' 9.0)" ts/quality.pnpm.yml
+# a hash-suffixed exact version is what `corepack use` writes, and corepack
+# resolves it — refusing it would reject the field the kit tells repos to add.
+# The digest below is the REAL one `corepack use pnpm@8.15.9` writes (0.35.0).
+PNPM8_SHA='sha512.499434c9d8fdd1a2794ebf4552b3b25c0a633abcee5bb15e7b5de90f32f47b513aca98cd5cfd001c31f0db454bc3804edccd578501e4ca293a6816166bbd9f81'
+stamps_variant "an exact version with corepack's integrity suffix is accepted" \
+  "$(pm_repo pnpm-lock.yaml "{\"name\":\"pm\",\"packageManager\":\"pnpm@8.15.9+$PNPM8_SHA\"}" 6.0)" ts/quality.pnpm.yml
+# ...but the suffix is corepack's integrity spec, which it parses and verifies the
+# download against, so a malformed one is one more guaranteed-red install. Passing
+# it through unvalidated would let anything after a `+` stamp (codex, round 1).
+refuses "a malformed integrity suffix is refused, not passed through" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm@8.15.9+garbage"}' 6.0)" 'expected a semver version'
+# A digest of the wrong length can NEVER match what the tarball hashes to, so it is
+# not merely unverifiable here — it is already known-bad (codex, round 4).
+refuses "a truncated digest is refused, not accepted as well-formed" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm@8.15.9+sha512.abc"}' 6.0)" 'expected a semver version'
+refuses "an unknown digest algorithm is refused" \
+  "$(pm_repo pnpm-lock.yaml "{\"name\":\"pm\",\"packageManager\":\"pnpm@8.15.9+md5.${PNPM8_SHA#sha512.}\"}" 6.0)" 'expected a semver version'
+# "exact version" means SEMVER-exact. corepack rejects a leading zero and an empty
+# prerelease identifier with the same "expected a semver version" (both measured,
+# corepack 0.35.0), so a looser check would wave through a declaration CI cannot
+# resolve (codex, round 5) — while a VALID prerelease must still stamp.
+refuses "a leading-zero version is refused (not semver, corepack rejects it)" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm@09.0.0"}' 9.0)" 'expected a semver version'
+refuses "an empty prerelease identifier is refused" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm@8.15.9-alpha."}' 6.0)" 'expected a semver version'
+stamps_variant "a valid prerelease version still stamps" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm@8.15.9-alpha.1"}' 6.0)" ts/quality.pnpm.yml
+# The detector's name rule and the stamper's validation have to agree about WHICH
+# declarations are about pnpm, or one slips between them: `pnpm @9.0.0` detects as
+# pnpm, corepack cannot resolve it, and a stricter reading in the stamper would
+# skip validation and stamp it as if nothing were declared (codex, round 3).
+refuses "a declaration with stray whitespace is refused, not skipped over" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":"pnpm @9.0.0"}' 9.0)" 'expected a semver version'
+# corepack does not trim the field either — a padded value gets "Unsupported
+# package manager specification" (measured), so the stamper must validate the raw
+# string rather than a normalised copy CI never sees (codex, round 7).
+refuses "a padded declaration is refused, not normalised into a valid one" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm","packageManager":" pnpm@9.0.0 "}' 9.0)" 'expected a semver version'
+# an unrecognised generation fails closed like the drift gate's schema reader:
+# the kit cannot name the pnpm that reads it, so it will not guess one
+refuses "an unrecognised lockfile generation is refused, not guessed" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm"}' 5.4)" 'a generation this kit does not know'
+# ...and a corrupt header is not gen 6 because it starts with a 6 (codex, round 6)
+refuses "a malformed lockfileVersion is not read as its leading digit" \
+  "$(pm_repo pnpm-lock.yaml '{"name":"pm"}' 6.not-a-version)" 'a generation this kit does not know'
+
 # The two workflow variants are byte-owned COPIES, so they drift silently: a
 # checkout SHA bumped in one and not the other is a version skew nobody sees
 # until a stamped repo's CI behaves differently from its neighbour's. Strip the
@@ -305,12 +407,15 @@ fi
 
 # No signal at all stays allowed on purpose: stamping before the first install
 # reconcile is an existing flow, and refusing it would break re-stamps for the two
-# repos already on the kit.
+# repos already on the kit. NO EVIDENCE and evidence of a manager the kit does not
+# serve are different cases and must not collapse into one another — this is the
+# half that has to keep defaulting, and it defaults to the npm workflow.
 BAREM="$(pm_repo '')"
-bash "$S" "$BAREM" --profile nextjs >/dev/null 2>&1 \
-  && [ -f "$BAREM/.quality-kit.json" ] \
-  && ok "a repo with no lockfile and no declaration still stamps" \
-  || bad "a repo with no lockfile and no declaration still stamps" "refused"
+stamps_variant "a repo with no lockfile and no declaration still stamps as npm" \
+  "$BAREM" ts/quality.npm.yml
+[ -f "$BAREM/.quality-kit.json" ] \
+  && ok "the bare-repo stamp is complete" \
+  || bad "the bare-repo stamp is complete" "no .quality-kit.json"
 
 # A missing python3 must fail loudly, not quietly downgrade detection. It was always
 # a hard requirement (the merges below are a python3 heredoc); swallowing its absence
