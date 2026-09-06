@@ -185,6 +185,39 @@ R="$(new_repo)"; ln -s naïve.txt "$R/lnk-ï"; git -C "$R" add -- lnk-ï
 LC_ALL="$UTF8_LOCALE" LANG="$UTF8_LOCALE" \
   script_blocks "a broken non-ASCII symlink target still blocks" "$R" "broken symlink"
 
+# A link reached THROUGH another symlink. Git cannot hold an index entry below a
+# symlink path, so the index has `current` (120000) and `versions/v1/config` but
+# nothing at `current/config` — while the checkout resolves it fine. Refusing here
+# is a false block by a GLOBAL pre-commit hook, which is the failure this file
+# argues is worse than the defect it screens for.
+R="$(new_repo)"; mkdir -p "$R/versions/v1"; echo k=v > "$R/versions/v1/config"
+ln -s versions/v1 "$R/current"; ln -s current/config "$R/config-link"
+git -C "$R" add -- versions/v1/config current config-link
+script_passes "a symlink reached through another tracked symlink is not refused" "$R"
+
+# The escape above must not become a blanket amnesty: a link with no symlinked
+# ancestor is still judged, in the same tree that contains one.
+R="$(new_repo)"; mkdir -p "$R/versions/v1"; echo k=v > "$R/versions/v1/config"
+ln -s versions/v1 "$R/current"; ln -s nope.txt "$R/plain-broken"
+git -C "$R" add -- versions/v1/config current plain-broken
+script_blocks "a plainly broken link still blocks in a tree that has symlinked dirs" "$R" "broken symlink"
+
+# The ancestor lookup must match the path EXACTLY. A pathspec naming a directory
+# matches everything beneath it, so `ls-files -s -- ':(literal)dir'` returns
+# `120000 … dir/inner-link` and reading that mode alone would declare `dir` itself
+# a symlink — exempting a genuinely broken `dir/missing` because some unrelated
+# link happens to live in the same directory. (Codex pre-commit gate, P2.)
+R="$(new_repo)"; mkdir -p "$R/dir"; echo t > "$R/dir/real.txt"
+ln -s real.txt "$R/dir/inner-link"; ln -s missing.txt "$R/dir/broken-here"
+git -C "$R" add -- dir/real.txt dir/inner-link dir/broken-here
+script_blocks "a symlink INSIDE a directory does not exempt that directory" "$R" "broken symlink"
+
+# The exemption cannot launder a broken chain: the ancestor is itself a symlink,
+# so it is judged on its own terms and the commit is refused there instead.
+R="$(new_repo)"; ln -s nonexistent "$R/current"; ln -s current/config "$R/config-link"
+git -C "$R" add -- current config-link
+script_blocks "a chain through a BROKEN ancestor link is still refused" "$R" "broken symlink"
+
 # The target exists on disk but is not in the index — the commit still contains a
 # link to nothing, which is precisely why existence is asked of the index.
 R="$(new_repo)"; echo t > "$R/target.txt"; ln -s target.txt "$R/lnk"

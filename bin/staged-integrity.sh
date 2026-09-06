@@ -292,8 +292,51 @@ for i in "${!LINK_PATHS[@]}"; do
   # No `-z`: only emptiness is read, and a NUL in a command substitution is
   # dropped with a warning on every match.
   if [ -z "$(git ls-files -- ":(literal)${RESOLVED}")" ]; then
-    fail "broken symlink: '${link}' -> '${target}' has no target in the commit ('${RESOLVED}' is not tracked)." \
-         "  Stage the target too, or remove the link."
+    # ...but an empty answer is not proof of a broken link when the path runs
+    # THROUGH another symlink. Git cannot hold an index entry below a symlink
+    # path, so for `config-link -> current/config` with `current -> versions/v1`
+    # the index holds `current` (120000) and `versions/v1/config`, and nothing at
+    # `current/config` — while the checkout resolves it perfectly. Refusing there
+    # is a false block, and this file argues at length that a gate people have to
+    # switch off is worse than the defect it screens for.
+    #
+    # This exemption does NOT let a broken chain through, because the ancestor is
+    # itself a symlink and gets judged on its own terms. Measured: with
+    # `current -> nonexistent` and `config-link -> current/config` both staged,
+    # the commit is still refused — on `current`, whose target is untracked. The
+    # only gap is an ancestor committed broken EARLIER and not touched now, and
+    # that is the pre-existing-link limit this file already documents and takes
+    # deliberately, not a hole this escape opens.
+    #
+    # ponytail: DECLINE to judge rather than resolve the chain. One index lookup
+    # per ancestor, no cycle bound needed because nothing is followed. Ceiling: a
+    # genuinely broken link reached through a symlinked directory is not caught —
+    # the same "outside this check's remit" the absolute and root-escaping cases
+    # already take, and the safe direction for a global pre-commit hook. Upgrade
+    # path: resolve tracked 120000 components against the index, with a depth
+    # bound, when a repo actually needs that caught.
+    # The path must match EXACTLY. A pathspec naming a directory matches every
+    # entry beneath it, so `ls-files -s -- ':(literal)dir'` happily returns
+    # `120000 … dir/inner-link` and reading its mode would declare `dir` a symlink
+    # — exempting a genuinely broken `dir/missing` because some unrelated link
+    # lives in the same directory. Compare the returned pathname, not just the
+    # mode. `-z` because a path may contain a newline.
+    via_link=""
+    anc="${RESOLVED%/*}"
+    while [ -n "$anc" ] && [ "$anc" != "$RESOLVED" ]; do
+      while IFS= read -r -d '' entry; do
+        [ "${entry#*$'\t'}" = "$anc" ] || continue
+        [ "${entry:0:6}" = "120000" ] && via_link="$anc"
+        break
+      done < <(git ls-files -s -z -- ":(literal)${anc}")
+      [ -n "$via_link" ] && break
+      [ "$anc" = "${anc%/*}" ] && break
+      anc="${anc%/*}"
+    done
+    if [ -z "$via_link" ]; then
+      fail "broken symlink: '${link}' -> '${target}' has no target in the commit ('${RESOLVED}' is not tracked)." \
+           "  Stage the target too, or remove the link."
+    fi
   fi
 done
 
