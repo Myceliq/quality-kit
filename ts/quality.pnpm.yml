@@ -60,8 +60,11 @@ jobs:
       # bearing, because pnpm >= 9 REFUSES a lockfileVersion 6 lockfile outright
       # (ERR_PNPM_LOCKFILE_BREAKING_CHANGE — measured with pnpm 11.9.0 against a
       # lockfile written by pnpm 8.15.9). A repo still on the pnpm 8 lockfile
-      # format therefore has to declare `"packageManager": "pnpm@8.x"`, or this
-      # step resolves a pnpm that cannot read its lockfile.
+      # format therefore has to declare an EXACT pnpm 8 version, e.g.
+      # `"packageManager": "pnpm@8.15.9"`, or this step resolves a pnpm that
+      # cannot read its lockfile. Exact, not a range: corepack rejects
+      # `pnpm@8.x` with "Invalid package manager specification in package.json
+      # (pnpm@8.x); expected a semver version" (measured, corepack 0.35.0).
       # ponytail: no pin of the kit's own — a kit-wide pnpm version would be
       # wrong for one of the two lockfile generations whichever one it named.
       # Upgrade path: have stamp.sh write `packageManager` (quality-kit#7 part 4),

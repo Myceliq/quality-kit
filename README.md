@@ -206,9 +206,13 @@ stamp PR — most of them BLOCK a green stamp.
   from `packageManager` when the repo declares one and otherwise resolves
   `latest`. pnpm ≥ 9 **refuses** a `lockfileVersion: '6.0'` lockfile outright
   (`ERR_PNPM_LOCKFILE_BREAKING_CHANGE` — measured, pnpm 11.9.0 against a lockfile
-  written by pnpm 8.15.9), so a repo still on the pnpm 8 format must declare
-  `"packageManager": "pnpm@8.x"` or CI resolves a pnpm that cannot read its own
-  lockfile. The drift gate reads both generations; the workflow can only run one.
+  written by pnpm 8.15.9), so a repo still on the pnpm 8 format must declare an
+  **exact** pnpm 8 version — `"packageManager": "pnpm@8.15.9"` — or CI resolves a
+  pnpm that cannot read its own lockfile. Exact, not a range: corepack rejects
+  `pnpm@8.x` with `Invalid package manager specification in package.json
+  (pnpm@8.x); expected a semver version` (measured, corepack 0.35.0), which
+  would swap one red CI for another.
+  The drift gate reads both generations; the workflow can only run one.
   Stamping the `packageManager` field is
   [#7](https://github.com/Myceliq/quality-kit/issues/7) part 4.
 - **pnpm workspaces are not supported yet.** The floor check reads the ROOT
