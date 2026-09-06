@@ -45,20 +45,4 @@ jobs:
           git config --global user.email ci@example.com
           git config --global user.name ci
           git config --global init.defaultBranch main
-          fail=0
-          for t in hooks/hooks.test.sh \
-                   hooks/git-pre-commit.test.sh \
-                   hooks/hooks-doctor.test.sh \
-                   bin/count-suppressions.test.sh \
-                   bin/stamp.test.sh \
-                   bin/check-drift.test.sh \
-                   bin/render-ruff.test.sh \
-                   bin/baseline-rules.test.sh \
-                   bin/loc-budget.test.sh \
-                   ts/oxlint-overrides.test.sh \
-                   ts/oxfmt-clean.test.sh \
-                   ts/oxlint-clean.test.sh \
-                   ts/kit-checkout-ignored.test.sh; do
-            echo "=== $t ==="; bash "$t" || fail=1
-          done
-          exit $fail
+          bash bin/selftest.sh

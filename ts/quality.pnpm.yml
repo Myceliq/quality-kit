@@ -51,6 +51,31 @@ jobs:
       - name: Drift gate
         run: KIT_DIR="$PWD/.quality-kit-src" bash .quality-kit-src/bin/check-drift.sh .
 
+      # Drift proves the stamped files ARE the pinned ones. It does not prove they
+      # WORK here. The kit's own CI proves they work in the kit's CI image — not in
+      # this repo's image, and not in the factory gate container, which injects
+      # FACTORY_GATE and once silently ungated a suite for a reason unrelated to the
+      # code under test. Running the pinned checkout's own suites here closes that
+      # gap: pinned gates, and they function on this runner. quality-kit#22.
+      # Before install on purpose — it needs only bash, git and python3, so a red
+      # kit is reported without spending an install first. The ts/*.test.sh suites
+      # SKIP without OXLINT_BIN rather than passing silently.
+      #
+      # The git identity is set for the same reason the kit's own tests.yml sets it:
+      # two fixture commits in hooks/hooks.test.sh do not pass `-c user.name/-c
+      # user.email` inline the way every sibling suite does, and a GitHub runner has
+      # no global identity and a domainless hostname, so git cannot auto-detect one.
+      # Measured with an empty HOME: the commit dies with "unable to auto-detect
+      # email address" — and the suite still reports ALL PASS, which is the worse
+      # half. Supplying the identity here means these suites test what they claim
+      # rather than running against a repo that was never built.
+      - name: Kit self-test
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+          git config --global init.defaultBranch main
+          bash .quality-kit-src/bin/selftest.sh
+
       # pnpm is not on the runner image. Corepack ships with Node, so enabling it
       # costs no third-party action and no new pinned SHA. It has to run BEFORE
       # setup-node: `cache: 'pnpm'` shells out to `pnpm store path` to find the
