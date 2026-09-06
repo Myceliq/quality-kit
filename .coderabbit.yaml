@@ -1,0 +1,26 @@
+# CodeRabbit configuration for quality-kit.
+#
+# WHY THIS FILE EXISTS AT ALL: CodeRabbit is installed on this org but automatic
+# reviews are switched OFF in the org UI, so PRs here were answered with
+# "Review skipped: automatic reviews are disabled" and never reviewed. This file
+# is read from the branch under review and outranks both the repo and org UI
+# settings, so it re-enables reviews for THIS repository without touching the
+# org default that other repos rely on.
+#
+# WHY IT IS SAFE TO ENABLE HERE AND NOT IN booking-platform: this repository is
+# PUBLIC. CodeRabbit is free forever for public repositories — Pro-tier reviews,
+# no seat, no approval queue — so a review here costs nothing.
+# booking-platform is PRIVATE and pays per developer, which is why it carries the
+# opposite config: `enabled: false` plus a `coderabbit` label gate, to stay under
+# the fair-usage throttle that drops a seat from 5 reviews/hr to 1/hr.
+#
+# NOT MIRRORED DOWNSTREAM: this file is repo-owned, not stamped. `bin/stamp.sh`
+# does not `put` it, so enabling reviews here says nothing about any repo this
+# kit stamps — each one keeps whatever CodeRabbit config it already has.
+reviews:
+  auto_review:
+    enabled: true
+# `auto_pause_after_reviewed_commits` is deliberately left at CodeRabbit's
+# default of 5. booking-platform lowers it to 1 to conserve a paid quota; there
+# is no quota to conserve here, and pinning a value equal to the default would
+# just be a number to keep in sync.
