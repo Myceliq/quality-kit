@@ -2,17 +2,33 @@
 #
 # WHY THIS FILE EXISTS AT ALL: CodeRabbit is installed on this org but automatic
 # reviews are switched OFF in the org UI, so PRs here were answered with
-# "Review skipped: automatic reviews are disabled" and never reviewed. This file
-# is read from the branch under review and outranks both the repo and org UI
-# settings, so it re-enables reviews for THIS repository without touching the
-# org default that other repos rely on.
+# "Review skipped: automatic reviews are disabled" and never reviewed — a green
+# check meaning "never looked at". This file re-enables them for THIS repository
+# without touching the org default other repos rely on.
 #
-# WHY IT IS SAFE TO ENABLE HERE AND NOT IN booking-platform: this repository is
-# PUBLIC. CodeRabbit is free forever for public repositories — Pro-tier reviews,
-# no seat, no approval queue — so a review here costs nothing.
-# booking-platform is PRIVATE and pays per developer, which is why it carries the
-# opposite config: `enabled: false` plus a `coderabbit` label gate, to stay under
-# the fair-usage throttle that drops a seat from 5 reviews/hr to 1/hr.
+# IT ONLY TAKES EFFECT FROM THE DEFAULT BRANCH. Measured on the PR that added it:
+# the status went "Review queued" -> "Review skipped: automatic reviews are
+# disabled", and CodeRabbit's own run report said `Configuration used:
+# Organization UI`. The decision of WHETHER to auto-review is made before the
+# head branch is consulted, so a config enabling auto-review cannot enable
+# itself. booking-platform's equivalent file works because it sits on ITS default
+# branch. An on-demand `@coderabbitai review` comment still works regardless.
+#
+# WHY ENABLE HERE AND NOT IN booking-platform: this repository is PUBLIC and that
+# one is PRIVATE, and CodeRabbit gives public repositories free reviews. That
+# settles COST — the run report's `Plan: Team` does not mean this repo bills.
+#
+# IT DOES NOT SETTLE RATE, WHICH IS THE ONE THAT MATTERS HERE. Free still means
+# subject to an adaptive fair-use limit: the hourly review refill adjusts DOWNWARD
+# with recent review volume over a rolling ~7-day window, and that budget is
+# account-wide. So reviews spent here are reviews booking-platform cannot spend.
+# That is the real coupling between the two repos — not money, capacity — and it
+# is why `auto_pause_after_reviewed_commits` below is pinned rather than left at
+# the default.
+#
+# booking-platform carries the opposite config — `enabled: false` plus a
+# `coderabbit` label gate — for the same reason, from the other direction: it is
+# the high-value consumer of that shared budget, so it spends only when labelled.
 #
 # NOT MIRRORED DOWNSTREAM: this file is repo-owned, not stamped. `bin/stamp.sh`
 # does not `put` it, so enabling reviews here says nothing about any repo this
@@ -20,7 +36,9 @@
 reviews:
   auto_review:
     enabled: true
-# `auto_pause_after_reviewed_commits` is deliberately left at CodeRabbit's
-# default of 5. booking-platform lowers it to 1 to conserve a paid quota; there
-# is no quota to conserve here, and pinning a value equal to the default would
-# just be a number to keep in sync.
+    # Default is 5. Pinned to 1 because the fair-use budget is ACCOUNT-WIDE: a
+    # re-review burned on a low-stakes push here is one booking-platform cannot
+    # spend on auth or billing. One review per PR plus a single follow-up is the
+    # right trade for a repo of lint configs and shell scripts. Re-trigger by
+    # hand with `@coderabbitai review` when a PR genuinely needs another pass.
+    auto_pause_after_reviewed_commits: 1
