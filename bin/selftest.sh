@@ -5,7 +5,14 @@
 #       glob fails closed instead of silently passing.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# `CDPATH=` on the cd itself: with CDPATH exported and a RELATIVE argument, bash's
+# `cd` PRINTS the directory it resolved to, and the command substitution swallows
+# that line too — ROOT comes out as the path twice over and the `cd "$ROOT"` below
+# then fails on a path that does not exist. Measured: with CDPATH set,
+# `ROOT="$(cd bin/.. && pwd)"` yields "<path>\n<path>". A stamped repo's CI invokes
+# this as `bash .quality-kit-src/bin/selftest.sh` — relative — so the trigger is one
+# exported variable away in an environment the kit does not own.
+ROOT="$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 # `bin/selftest.test.sh` is deliberately NOT excluded. Excluding it looks like recursion avoidance
