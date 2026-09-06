@@ -550,6 +550,43 @@ out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
 echo "$out" | grep -q "^3 tracked source lines" && ok "tsx logical-and JSX in container counted" || bad "tsx logical-and JSX in container counted" "$out"
 
 
+# --- the brace stack is empty when a well-formed file ends (#10) ---
+# The JSX frame stack and the template-interpolation state are separate, so a
+# '}' was owned by branch order instead of by nesting: a container opened inside
+# `${...}` had its closing brace claimed by the interpolation, and its frame was
+# never popped. No count moves when that happens — after the leak the parser is
+# in ordinary-JS mode, where nothing pops — so no count can catch it. The
+# invariant has to be read off the parser itself: the embedded counter is
+# extracted and js_lines traced for the stack depth it returns at.
+stack_at_eof() {  # <fixture.tsx> -> "<counted lines> <frames left at EOF>"
+  { awk "/<<'PY'/{f=1;next} /^rows = \[\]\$/{f=0} f" "$LB"
+    cat <<'DRV'
+depth = []
+def trace(frame, event, arg):
+    if event == "return" and frame.f_code.co_name == "js_lines":
+        depth.append(len(frame.f_locals["jsx_stack"]))
+    return trace
+lines = open(sys.argv[1]).read().splitlines()
+sys.settrace(trace)
+n = js_lines(lines, is_jsx=True)
+sys.settrace(None)
+print(n, depth[-1])
+DRV
+  } | python3 - "$1"
+}
+T="$(mktemp -d)"
+printf 'const view = <div>{`x ${<span>{value}</span>}`}</div>;\nconst a = 1;\nconst b = 2;\n/* real */\n' > "$T/interp_jsx.tsx"
+printf 'const view = <div>{`x ${<span attr={q}>{value}</span>}`}</div>;\nconst a = 1;\nconst b = 2;\n/* real */\n' > "$T/interp_attr.tsx"
+printf 'const view = <div>{`${<a>{b}</a>}`}</div>;\nconst a = 1;\nconst b = 2;\n/* real */\n' > "$T/interp_bare.tsx"
+printf 'const view = <div>{`x ${<span>{value}</span>} y ${<i>{j}</i>}`}</div>;\nconst a = 1;\nconst b = 2;\n/* real */\n' > "$T/interp_twice.tsx"
+for f in "$T"/interp_*.tsx; do
+  # 3 code lines, the block comment free, and nothing left on the stack
+  got="$(stack_at_eof "$f")"
+  [ "$got" = "3 0" ] && ok "template interpolation holding JSX balances: $(basename "$f")" \
+    || bad "template interpolation holding JSX balances: $(basename "$f")" "$got"
+done
+rm -r "$T"
+
 # --- over budget: exit 1 ---
 R="$(mkrepo)"
 printf 'x = 1\ny = 2\nz = 3\n' > "$R/d.py"

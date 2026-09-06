@@ -184,8 +184,9 @@ def js_lines(lines, is_jsx=False):
 
     def push_jsx():
         """Enter a JSX expression container: stash the enclosing element and
-        parse the expression from a clean state, one frame per '{' so the
-        matching '}' restores it."""
+        parse the expression from a clean state. One frame per '{' — including
+        the plain braces inside a container or a template interpolation, which
+        is what makes the matching '}' identifiable."""
         nonlocal jsx_depth, in_jsx_tag, tag_bracket_depth
         nonlocal is_closing_tag, is_self_closing, is_generic_tag
         jsx_stack.append((jsx_depth, in_jsx_tag, tag_bracket_depth,
@@ -198,6 +199,15 @@ def js_lines(lines, is_jsx=False):
         nonlocal is_closing_tag, is_self_closing, is_generic_tag
         (jsx_depth, in_jsx_tag, tag_bracket_depth,
          is_closing_tag, is_self_closing, is_generic_tag) = jsx_stack.pop()
+
+    def in_frame():
+        """Whether the next '}' closes a brace frame rather than the template
+        interpolation around it. Braces live on one stack, but a template
+        interpolation is tracked separately, so nesting has to decide ownership
+        — by branch order the interpolation stole the '}' of a container opened
+        inside it and that frame was never popped."""
+        base = template_stack[-1] - 1 if template_stack and template_stack[-1] > 0 else 0
+        return len(jsx_stack) > base
 
     for line in lines:
         in_template_payload = (len(template_stack) > 0 and template_stack[-1] == 0)
@@ -215,7 +225,9 @@ def js_lines(lines, is_jsx=False):
                 if line[i] == "\\":
                     i += 2
                 elif line.startswith("${", i):
-                    template_stack[-1] = 1
+                    # Records where the brace stack stood, so the '}' that ends
+                    # this interpolation is the one that returns to it.
+                    template_stack[-1] = len(jsx_stack) + 1
                     in_template_payload = False
                     has_code = True
                     prev_char = "{"
@@ -306,7 +318,7 @@ def js_lines(lines, is_jsx=False):
                     last_word = ""
                     in_word = False
                     i += 1
-                elif line[i] == "}" and jsx_stack:
+                elif line[i] == "}" and in_frame():
                     # Only reachable on malformed source — a well-formed '}' is
                     # consumed by the expression frame, not by a tag. Popping
                     # anyway keeps the stack from leaking to EOF.
@@ -412,31 +424,25 @@ def js_lines(lines, is_jsx=False):
                     in_word = False
                     after_control_paren = False
                     i += 1
-                elif len(template_stack) > 0 and template_stack[-1] > 0 and line[i] == "{":
-                    template_stack[-1] += 1
-                    has_code = True
-                    prev_char = "{"
-                    last_word = ""
-                    in_word = False
-                    i += 1
-                elif len(template_stack) > 0 and template_stack[-1] > 0 and line[i] == "}":
-                    template_stack[-1] -= 1
-                    in_template_payload = (template_stack[-1] == 0)
-                    has_code = True
-                    prev_char = "}"
-                    last_word = ""
-                    in_word = False
-                    i += 1
-                elif is_jsx and line[i] == "{" and (jsx_depth > 0 or jsx_stack):
+                elif line[i] == "{" and (in_frame() or (is_jsx and jsx_depth > 0)
+                                         or (template_stack and template_stack[-1] > 0)):
                     has_code = True
                     push_jsx()
                     prev_char = "{"
                     last_word = ""
                     in_word = False
                     i += 1
-                elif is_jsx and line[i] == "}" and jsx_stack:
+                elif line[i] == "}" and in_frame():
                     has_code = True
                     pop_jsx()
+                    prev_char = "}"
+                    last_word = ""
+                    in_word = False
+                    i += 1
+                elif line[i] == "}" and template_stack and template_stack[-1] > 0:
+                    template_stack[-1] = 0
+                    in_template_payload = True
+                    has_code = True
                     prev_char = "}"
                     last_word = ""
                     in_word = False
