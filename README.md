@@ -30,6 +30,48 @@ are matched before any approval signal**, and every case in
 printed success. Read the comments there before widening a regex — two of them
 document gaps that are deliberate, where the obvious "fix" reopens a hole.
 
+### The staged-integrity preflight
+
+`bin/staged-integrity.sh` runs inside the hook's deterministic block, in a
+stamped repo, immediately **before** that repo's `validate:fast` and therefore
+before any model call. The profiles validate *language code* — Pyright, Ruff,
+tsc, a SLOC budget — and none of them sees a repository-shape defect. Four
+checks, all from Git itself, no new dependency:
+
+| check | what it refuses |
+|---|---|
+| `git diff --cached --check` | leftover conflict markers, and whitespace errors under the repo's own `core.whitespace` / `.gitattributes` rules |
+| blob size | a newly staged blob over the ceiling. Only new *content* counts: deletions carry no blob, a `chmod` or `git mv` re-lists the same object, and a large file already in `HEAD` and untouched never appears in the staged diff at all |
+| case fold | two tracked paths that differ only in case, which become one file on a macOS or Windows checkout |
+| symlinks | a symlink whose target is not in the commit — staged, or left broken because the commit deletes or renames what it points at, including emptying a directory it points at — and a symlink flattened into a regular file (index mode `120000` → `100644`) |
+
+It reads the **index** — `git ls-files`, `git diff --cached`, `git cat-file` —
+and never the working tree: the gate certifies what the commit will *contain*,
+and the two diverge the moment anything is staged with `git add -p` or edited
+after `git add`. All Git output is NUL-delimited, so paths with spaces,
+newlines, glob characters or a leading dash are handled rather than split.
+
+The size ceiling is **2 MiB** (`2097152` bytes), well clear of the largest
+lockfiles and committed fixtures in the fleet and well under anything a binary
+or a vendored archive reaches. Override it per repo or per commit with
+`QK_MAX_STAGED_BLOB_BYTES=<bytes>`; a malformed value falls back to the default
+with a notice rather than aborting, because a global hook that dies on a typo is
+a fleet-wide commit freeze.
+
+Three deliberate limits. The case fold is ASCII (`LC_ALL=C tolower`) over the
+whole path, so it catches the pair that actually loses data but not a `src/` vs
+`Src/` directory-case difference. Symlink targets that are absolute or climb
+above the repo root are left alone — they are not the index's business. And a
+link that was **already** broken when it was committed is not re-judged on every
+later commit: doing that would leave the repo unable to commit anything without
+`--no-verify`, and a gate people switch off is worse than the defect.
+
+The kit is installed by copying, so the hook looks for the script in its sibling
+`bin/` and then beside itself. In **neither** place, the commit still proceeds
+and the hook prints `[staged-integrity] NOT INSTALLED`: one uncopied file must
+not freeze every commit on a box, but a gate that is silently absent is the
+failure mode this whole hook is written against, so it says so.
+
 ### When the review does not run
 
 Every path that reaches a commit without a completed review now prints

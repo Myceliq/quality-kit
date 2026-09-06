@@ -150,6 +150,33 @@ fi
 # never spend a Codex call. Repos opt in by being stamped (.quality-kit.json).
 QK_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -n "$QK_ROOT" ] && [ -f "$QK_ROOT/.quality-kit.json" ]; then
+  # Staged-index integrity, BEFORE validate:fast and therefore before any model
+  # call. The profiles validate language code; nothing in them sees a conflict
+  # marker in a prompt file, a 40 MB blob with a two-line textual diff, or a
+  # case-colliding path pair. See bin/staged-integrity.sh.
+  #
+  # The kit is installed by copying, so the script is looked for beside the hook
+  # as well as in its sibling bin/. When it is in NEITHER place the commit still
+  # proceeds — a global hook that blocks every commit on the box because one file
+  # was not copied is a worse outage than the defects it screens for — but it says
+  # so loudly, because a gate that is silently absent is the failure mode this
+  # whole file is written against.
+  QK_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  QK_INTEGRITY=""
+  for qk_cand in "$QK_HOOK_DIR/../bin/staged-integrity.sh" "$QK_HOOK_DIR/staged-integrity.sh"; do
+    [ -f "$qk_cand" ] && { QK_INTEGRITY="$qk_cand"; break; }
+  done
+  if [ -n "$QK_INTEGRITY" ]; then
+    # Deliberately NOT wrapped in the QK_GIT_SCRUB below: git points
+    # GIT_INDEX_FILE at the index this commit will actually use — a temporary
+    # one under `git commit --only`/`-p` — and that index is the thing being
+    # certified. Scrubbing it here would check a different commit.
+    bash "$QK_INTEGRITY" || exit 1
+  else
+    echo "[staged-integrity] NOT INSTALLED — no staged-integrity.sh beside this hook or in ../bin." >&2
+    echo "[staged-integrity] The staged-index preflight did NOT run. Copy it next to the hook." >&2
+  fi
+
   QK_RUNNER="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('runner','npm'))" "$QK_ROOT/.quality-kit.json" 2>/dev/null || echo npm)"
   echo "[quality-kit] validate:fast (runner: $QK_RUNNER)..."
   # Scrub the inherited git context, exactly as the Codex call below already does.
