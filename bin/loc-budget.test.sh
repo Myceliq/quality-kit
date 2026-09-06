@@ -480,6 +480,75 @@ git -C "$R" add -A
 out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
 echo "$out" | grep -q "^4 tracked source lines" && ok "tsx nested JSX in attr expr does not hide the file" || bad "tsx nested JSX in attr expr does not hide the file" "$out"
 
+# --- tsx nested JSX in an attribute expression: a BOUNDED false comment (#10) ---
+# The EOF fail-safe above only catches a false comment that never closes. When one
+# closes at a real `*/` further down, the lines between are silently lost and
+# nothing notices — the undercount this issue is about. An expression container
+# now parses from a clean state, so <span>'s child text is raw text and its '/*'
+# opens nothing. Counter-based parsing counted 2 here.
+R="$(mkrepo)"
+cat > "$R/bounded.tsx" <<'EOF'
+const view = <Comp child={<span>/* literal</span>} />;
+const a = 1;
+const b = 2;
+/* a real comment */
+const c = 3;
+EOF
+git -C "$R" add -A
+out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
+# lines 1, 2, 3, 5 are code; line 4 is a comment-only line and free -> 4 counted
+echo "$out" | grep -q "^4 tracked source lines" && ok "tsx bounded false comment from nested JSX" || bad "tsx bounded false comment from nested JSX" "$out"
+
+# --- tsx nested JSX child text containing */ leaves comment state alone ---
+# The mirror of the case above: raw child text must not close a comment either,
+# or the real block comment below it stops being free.
+R="$(mkrepo)"
+cat > "$R/nested_closer.tsx" <<'EOF'
+const view = <Comp child={<span>*/ literal</span>} />;
+/* a real comment
+   spanning two lines */
+const a = 1;
+EOF
+git -C "$R" add -A
+out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
+# lines 1 and 4 counted; lines 2-3 are the real comment -> 2 counted lines
+echo "$out" | grep -q "^2 tracked source lines" && ok "tsx nested child text with */ counted" || bad "tsx nested child text with */ counted" "$out"
+
+# --- tsx multi-line {/* … */} JSX comment stays free ---
+# The guard the two reverted narrow fixes broke: a legitimate JSX comment must not
+# start counting. Only its interior line is free — the opener and closer lines
+# carry the container's own braces, which are code.
+R="$(mkrepo)"
+cat > "$R/jsx_comment_block.tsx" <<'EOF'
+export function Comp() {
+  return (
+    <div>
+      {/* explanation
+          middle line of the comment
+          continues here */}
+      <span>text</span>
+    </div>
+  );
+}
+EOF
+git -C "$R" add -A
+out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
+# 10 lines, line 5 (pure comment body) free -> 9 counted lines
+echo "$out" | grep -q "^9 tracked source lines" && ok "tsx multiline JSX comment interior free" || bad "tsx multiline JSX comment interior free" "$out"
+
+# --- tsx {foo && <Bar/>} is code ---
+# A container holding JSX is still an expression: nothing in it becomes free.
+R="$(mkrepo)"
+cat > "$R/jsx_logical.tsx" <<'EOF'
+export function Comp() {
+  return <div>{foo && <Bar/>}</div>;
+}
+EOF
+git -C "$R" add -A
+out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
+# 3 lines of TSX code -> 3 counted lines
+echo "$out" | grep -q "^3 tracked source lines" && ok "tsx logical-and JSX in container counted" || bad "tsx logical-and JSX in container counted" "$out"
+
 
 # --- over budget: exit 1 ---
 R="$(mkrepo)"
