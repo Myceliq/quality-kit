@@ -97,12 +97,14 @@ human-readable sentence in the commit output, so nothing downstream could tell
 *reviewed and clean* from *never ran* — and in an agent-driven repo nobody reads
 the sentence.
 
-Reasons are classified into two kinds, because they want different answers:
+Reasons are classified into three kinds, because they want different answers.
+The class is the log's fifth column, so this table is what a census over it reads:
 
 | class | reasons | what it means |
 |---|---|---|
 | `provider_failure` | `codex_unavailable`, `usage_limit`, `sandbox_init`, `timeout`, `empty_output`, `error` | the review was **unavailable**. Retrying later works. |
 | `structural` | `oversize_diff`, `oversize_plan_diff`, `plan_doc_advisory` | the diff is **not reviewable in this form**. No retry rescues it. |
+| `install_failure` | `preflight_missing` | a **deterministic** gate is not installed. Written by `PREFLIGHT_SKIPPED`, not `GATE_SKIPPED` — the review itself ran. |
 
 `usage_limit` and `sandbox_init` are separate reasons on purpose: neither is
 transient. Usage exhaustion persists until the quota resets and a sandbox that
@@ -117,10 +119,16 @@ clone or a CI runner that never sourced anyone's profile. An explicit
 environment variable wins over the stamped value, so a deliberate one-off
 remains possible.
 
-Strict mode refuses an **outage**, not an unreviewable diff: only
-`provider_failure` blocks. Structural skips are still logged, but blocking them
-would leave a strict repo unable to land an oversized diff or a plan doc at all,
-and no retry or alternative reviewer would change the answer.
+Strict mode refuses an **outage**, not an unreviewable diff: of the review-skip
+classes, only `provider_failure` blocks. Structural skips are still logged, but
+blocking them would leave a strict repo unable to land an oversized diff or a
+plan doc at all, and no retry or alternative reviewer would change the answer.
+
+`install_failure` blocks under strict mode too, by the same reasoning rather than
+as an exception to it: a preflight that is not installed recurs on every commit
+until someone copies the file — `sandbox_init`'s shape, the opposite of a diff no
+retry can rescue. It is a separate class because the *review* still ran, so it
+must never be counted as an unreviewed commit.
 
 Knobs are read as `REVIEW_HOOK_<NAME>` first and `CODEX_HOOK_<NAME>` second
 (`LIB_ONLY`, `MAX_DIFF_BYTES`, `MODEL`, `REASONING_EFFORT`, `REQUIRE_GATE`,

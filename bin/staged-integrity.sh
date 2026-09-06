@@ -23,6 +23,18 @@
 # globbed or read as options.
 set -euo pipefail
 
+# This gate is BYTE-oriented end to end — git paths are bytes, its output is
+# NUL-delimited, and `git cat-file --batch` reports blob sizes in bytes. Under a
+# UTF-8 locale bash's `read -N` counts CHARACTERS instead, so a symlink target
+# carrying any non-ASCII byte desyncs the batch reader below: `ln -s café.txt lnk`
+# is 9 bytes but 8 characters, `read -N 9` eats the newline `--batch` writes after
+# the contents, the following `read _` hits EOF and returns 1, and — a plain
+# command in a while body under `set -e` — this script dies with NO output, which
+# the hook turns into a SILENT refusal of a valid commit. Measured on one staged
+# index: exit 1 under en_US.UTF-8, exit 0 under C. Set once, here, rather than at
+# each read: nothing in this file wants character semantics.
+export LC_ALL=C
+
 # --- size ceiling ------------------------------------------------------------
 # 2 MiB. Nothing a human writes reaches it: it clears the largest lockfiles and
 # committed test fixtures in the fleet by a wide margin, while a binary, a
@@ -227,6 +239,18 @@ fi
 # substitution strips trailing newlines, so a link whose real target is "x\n"
 # would be checked as "x": broken links pass when "x" happens to be tracked, and
 # valid ones fail. `read -N <size>` takes the blob verbatim, newlines included.
+#
+# LC_ALL=C over the whole loop, because `--batch` reports the size in BYTES while
+# `read -N` consumes that many CHARACTERS. In a UTF-8 locale any non-ASCII byte in
+# a target desyncs the stream: `ln -s café.txt lnk` is 9 bytes but 8 characters, so
+# `read -N 9` eats the newline `--batch` writes after the contents, the following
+# `read _` hits EOF and returns 1, and — a plain command in a while body under
+# `set -e` — the script dies with NO output at all, which the hook turns into a
+# SILENT refusal of a valid commit. Measured on one staged index: exit 1 under
+# en_US.UTF-8, exit 0 under C. With two or more links it desyncs rather than
+# ending, and the next record's contents are parsed as a header, firing a bogus
+# "has no readable blob". Set once around the loop rather than per-read: every
+# read in here is over the same byte stream.
 LINK_TARGETS=()
 if [ "${#LINK_SHAS[@]}" -gt 0 ]; then
   i=0

@@ -165,6 +165,26 @@ script_passes "symlink to a staged target passes (link name with a space)" "$R"
 R="$(new_repo)"; ln -s target.txt "$R/$SP"; git -C "$R" add -- "$SP"
 script_blocks "symlink to an untracked target blocks" "$R" "broken symlink"
 
+# A NON-ASCII target, which is where bytes and characters come apart. `--batch`
+# reports the blob size in bytes; bash `read -N` counts characters unless the
+# script forces a byte locale. 'café.txt' is 9 bytes and 8 characters, so an
+# unforced read swallows the newline after the contents, the next read hits EOF,
+# and the script dies under `set -e` with no output — the hook then refuses a
+# VALID commit silently. Two links are used because one desyncs into a bogus
+# "has no readable blob" on the following record rather than ending the stream.
+# Both arms run with an explicit UTF-8 locale, or the bug cannot reproduce here.
+UTF8_LOCALE="${QK_TEST_UTF8_LOCALE:-en_US.UTF-8}"
+R="$(new_repo)"; echo t > "$R/café.txt"
+ln -s café.txt "$R/lnk-á"; ln -s café.txt "$R/lnk-é"
+git -C "$R" add -- café.txt lnk-á lnk-é
+LC_ALL="$UTF8_LOCALE" LANG="$UTF8_LOCALE" \
+  script_passes "a non-ASCII symlink target does not desync the batch reader" "$R"
+
+# ...and the check still WORKS on those names, rather than passing by not looking.
+R="$(new_repo)"; ln -s naïve.txt "$R/lnk-ï"; git -C "$R" add -- lnk-ï
+LC_ALL="$UTF8_LOCALE" LANG="$UTF8_LOCALE" \
+  script_blocks "a broken non-ASCII symlink target still blocks" "$R" "broken symlink"
+
 # The target exists on disk but is not in the index — the commit still contains a
 # link to nothing, which is precisely why existence is asked of the index.
 R="$(new_repo)"; echo t > "$R/target.txt"; ln -s target.txt "$R/lnk"
