@@ -58,4 +58,29 @@ set +e; (cd "$RF" && printf '{"stop_hook_active": true}' | bash "$SV" 2>/dev/nul
 [ "$rc" = 0 ] && ok "stop_hook_active releases (no livelock)" || bad "stop_hook_active releases (no livelock)" "rc=$rc"
 (cd "$(mktemp -d)" && git init -q . && echo '{}' | bash "$SV") && ok "unstamped repo no-op" || bad "unstamped repo no-op" "blocked"
 
+# The payload's cwd — not the hook's — picks the tree. A session working in one repo must not be
+# blocked by whatever happens to be dirty in the project dir the runtime launched the hook from,
+# which on a shared checkout is a peer session's in-flight work.
+RCLEAN=$(mk_repo 0)
+(cd "$RF" && echo x > code.ts)                       # project dir: dirty AND red
+(cd "$RCLEAN" && echo x > mine.ts)                   # session's own tree: dirty and green
+(cd "$RF" && printf '{"cwd":"%s"}' "$RCLEAN" | bash "$SV") \
+  && ok "payload cwd selects the session's own repo" \
+  || bad "payload cwd selects the session's own repo" \
+         "blocked on the project dir's tree instead of the session's"
+
+# ...and the reverse, so the above cannot pass by the gate simply going quiet.
+set +e; err=$( (cd "$RCLEAN" && printf '{"cwd":"%s"}' "$RF" | bash "$SV") 2>&1 >/dev/null ); rc=$?; set -e
+[ "$rc" = 2 ] && echo "$err" | grep -q "validate:fast FAILED" \
+  && ok "payload cwd still blocks when THAT tree is red" \
+  || bad "payload cwd still blocks when THAT tree is red" "rc=$rc err=$err"
+
+# A cwd that is absent, empty or gone falls back to the hook's own cwd — never silently skips.
+set +e; (cd "$RF" && printf '{"cwd":"/nonexistent/%s"}' "$$" | bash "$SV" 2>/dev/null); rc=$?; set -e
+[ "$rc" = 2 ] && ok "missing cwd falls back to the hook's cwd" \
+  || bad "missing cwd falls back to the hook's cwd" "rc=$rc (a skipped gate, not a pass)"
+set +e; (cd "$RF" && printf '{"cwd":""}' | bash "$SV" 2>/dev/null); rc=$?; set -e
+[ "$rc" = 2 ] && ok "empty cwd falls back to the hook's cwd" \
+  || bad "empty cwd falls back to the hook's cwd" "rc=$rc (a skipped gate, not a pass)"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
