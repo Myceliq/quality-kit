@@ -446,4 +446,68 @@ bash "$S" "$PYR" --profile python >/dev/null 2>&1 \
   && ok "a python repo with a stray JS lockfile is unaffected" \
   || bad "a python repo with a stray JS lockfile is unaffected" "refused"
 
+# tsconfig is JSONC: tsc accepts comments and trailing commas, so a commented
+# tsconfig must neither crash the stamper (it did: JSONDecodeError on
+# booking-platform) nor lose its comments to a json rewrite.
+mk_jsonc_repo() {  # $1 = tsconfig.json body
+  local r; r="$(mktemp -d)"
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null \
+    && printf '%s' "$1" > tsconfig.json \
+    && git add -A && git -c user.name=t -c user.email=t@t.local commit -q -m init) >/dev/null
+  echo "$r"
+}
+JC="$(mk_jsonc_repo '{
+  "compilerOptions": {
+    "strict": true,
+    // keep: explicit .ts specifiers /* not a block */
+    "paths": { "@/*": ["./src/*"] },
+  },
+  /* block comment */
+  "include": ["**/*.ts"],
+}
+')"
+bash "$S" "$JC" --profile nextjs >/dev/null 2>&1 && python3 -c "
+s=open('$JC/tsconfig.json').read()
+assert s.startswith('{\n  \"extends\": \"./tsconfig.quality.json\",\n  \"compilerOptions\"'), s
+for keep in ('// keep: explicit .ts specifiers /* not a block */', '/* block comment */',
+             '\"./src/*\"', '\"**/*.ts\"'):
+    assert keep in s, keep
+" && ok "commented tsconfig without extends: extends inserted, comments kept" \
+  || bad "commented tsconfig without extends: extends inserted, comments kept" "$(cat "$JC/tsconfig.json")"
+
+JK="$(mk_jsonc_repo '{
+  // already stamped
+  "compilerOptions": { "paths": { "@/*": ["./src/*"] } },
+  "extends": "./tsconfig.quality.json",
+}
+')"
+before="$(sha256sum < "$JK/tsconfig.json")"
+bash "$S" "$JK" --profile nextjs >/dev/null 2>&1 && [ "$before" = "$(sha256sum < "$JK/tsconfig.json")" ] \
+  && ok "commented tsconfig already correct: byte-identical" \
+  || bad "commented tsconfig already correct: byte-identical" "$(cat "$JK/tsconfig.json")"
+
+JX="$(mk_jsonc_repo '{
+  // chained base
+  "extends": "@base/x",
+  "compilerOptions": {}
+}
+')"
+before="$(sha256sum < "$JX/tsconfig.json")"
+rc=0; out="$(bash "$S" "$JX" --profile nextjs 2>&1)" || rc=$?
+if [ "$rc" != 0 ] && printf '%s' "$out" | grep -Fq 'set it by hand to "extends": ["@base/x", "./tsconfig.quality.json"]' \
+   && printf '%s' "$out" | grep -Fq "$JX/tsconfig.json" \
+   && [ "$before" = "$(sha256sum < "$JX/tsconfig.json")" ]; then
+  ok "commented tsconfig with a different extends: refused, file untouched"
+else
+  bad "commented tsconfig with a different extends: refused, file untouched" "rc=$rc out=$out"
+fi
+
+# plain JSON keeps the json-rewrite path, unchanged
+JP="$(mk_jsonc_repo '{"compilerOptions":{"strict":true}}')"
+bash "$S" "$JP" --profile nextjs >/dev/null 2>&1 && python3 -c "
+import json
+s=open('$JP/tsconfig.json').read()
+assert s==json.dumps({'compilerOptions':{'strict':True},'extends':'./tsconfig.quality.json'},indent=2)+'\n', s
+" && ok "plain tsconfig: json rewrite as before" || bad "plain tsconfig: json rewrite as before" "$(cat "$JP/tsconfig.json")"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
