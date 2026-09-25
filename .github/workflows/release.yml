@@ -54,6 +54,14 @@ jobs:
               # reachable from HEAD that touched the file; since nothing has
               # touched it since (VERSION still reads the same value we just
               # read), that commit is exactly the one that set it.
+              # ponytail: this is "most recent commit that TOUCHED VERSION",
+              # not "most recent commit that CHANGED its value" — a no-op
+              # rewrite of VERSION (e.g. a trailing-newline fix) after the
+              # real bump would shift VERSION_SHA to that later commit. Rare
+              # and low-stakes (still a real commit carrying that VERSION
+              # value, just not the bump itself); upgrade to walking blame/log
+              # for the first commit whose VERSION content already read the
+              # current value if that ever actually happens.
               VERSION_SHA="$(git log -1 --format=%H -- VERSION)"
               git config user.name "github-actions[bot]"
               git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

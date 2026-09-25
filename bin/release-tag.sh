@@ -16,9 +16,10 @@ VERSION="${1:?usage: release-tag.sh <version> <existing-tags-file>}"
 TAGS_FILE="${2:?usage: release-tag.sh <version> <existing-tags-file>}"
 
 # Strict semver core triplet only — no pre-release/build metadata, no short
-# form. "1.2" and "1.2.3-rc1" are both refused; a fuzzier match would let a
-# malformed VERSION resolve to SOME tag string and get pushed anyway.
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# form, no leading zeros (semver.org: numeric identifiers MUST NOT have them,
+# so "01.2.3" is as invalid as "1.2"). A fuzzier match would let a malformed
+# VERSION resolve to SOME tag string and get pushed anyway.
+if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo invalid
   exit 1
 fi

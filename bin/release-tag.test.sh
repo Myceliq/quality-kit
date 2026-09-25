@@ -33,6 +33,16 @@ T="$(tagsfile)"
 rc=0; out="$(bash "$RT" 1.2.3-rc1 "$T")" || rc=$?
 [ "$rc" = 1 ] && [ "$out" = invalid ] && ok "pre-release suffix invalid" || bad "pre-release suffix invalid" "rc=$rc out=$out"
 
+# --- leading zero "01.2.3": invalid (semver forbids leading zeros) ---
+T="$(tagsfile)"
+rc=0; out="$(bash "$RT" 01.2.3 "$T")" || rc=$?
+[ "$rc" = 1 ] && [ "$out" = invalid ] && ok "leading zero invalid" || bad "leading zero invalid" "rc=$rc out=$out"
+
+# --- a lone zero component is valid, unlike a leading zero ---
+T="$(tagsfile)"
+rc=0; out="$(bash "$RT" 0.5.4 "$T")" || rc=$?
+[ "$rc" = 0 ] && [ "$out" = create ] && ok "lone zero component valid" || bad "lone zero component valid" "rc=$rc out=$out"
+
 # --- empty tags file (repo's very first release): create ---
 T="$(tagsfile)"
 rc=0; out="$(bash "$RT" 0.1.0 "$T")" || rc=$?
