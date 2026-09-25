@@ -169,6 +169,10 @@ grep -qE "^STAMP_ARGV: .*bin/stamp\.sh .* --profile node$" "$CASE_LOG" \
 grep -q "^gh pr create" "$CASE_LOG" \
   && ok "happy path opened a PR" || bad "happy path opened a PR" "log: $(cat "$CASE_LOG")"
 pr_create_line="$(grep "^gh pr create" "$CASE_LOG" || true)"
+# Mutation target: drop --draft from bump-pin.sh's PR-open call and this
+# goes red — a ready bump PR is squash-merged unreviewed by a merge sweep.
+echo "$pr_create_line" | grep -q -- " --draft" \
+  && ok "PR opened as a draft" || bad "PR opened as a draft" "$pr_create_line"
 echo "$pr_create_line" | grep -q "9\.9\.8" && echo "$pr_create_line" | grep -q "9\.9\.9" \
   && ok "PR body names both versions" || bad "PR body names both versions" "$pr_create_line"
 "$REAL_GIT" -C "$CASE_CONSUMER_BARE" show-ref --verify --quiet refs/heads/quality-kit/bump-9.9.9 \
