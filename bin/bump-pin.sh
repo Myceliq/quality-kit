@@ -93,7 +93,10 @@ git -C "$CONSUMER_DIR" \
   commit -q -m "chore(quality-kit): bump pin $PIN_VERSION -> $LATEST_VERSION"
 git -C "$CONSUMER_DIR" push -q -u origin "$BRANCH"
 
-gh pr create --repo "$CONSUMER" --head "$BRANCH" \
+# --draft: a consumer's merge sweep may squash-merge any green non-draft PR
+# (booking-platform's does), so a ready bump would reach main unreviewed.
+# A human marks it ready after reading the re-stamp diff.
+gh pr create --draft --repo "$CONSUMER" --head "$BRANCH" \
   --title "chore(quality-kit): bump pin to $LATEST_VERSION" \
   --body "Bumps the quality-kit pin from $PIN_VERSION to $LATEST_VERSION."
 echo "bump-pin: opened PR for $CONSUMER $PIN_VERSION -> $LATEST_VERSION"
