@@ -5,7 +5,8 @@
 # checkout and fails. The decision (create/skip/invalid) lives in
 # bin/release-tag.sh, tested by bin/release-tag.test.sh; this workflow only
 # does the git/network side the script can't: list the remote's tags, and on
-# "create", push an annotated tag on the commit that triggered the run.
+# "create", push an annotated tag on the commit that last set VERSION
+# (`git log -1 -- VERSION`), not necessarily the commit that triggered the run.
 ##
 name: release-tag
 

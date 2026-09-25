@@ -355,8 +355,9 @@ stamp PR — most of them BLOCK a green stamp.
 
 Bump `VERSION` and merge; CI tags it. `.github/workflows/release.yml` runs
 `bin/release-tag.sh` on every push to main and, when `quality-kit-v<VERSION>`
-doesn't already exist on the remote, pushes an annotated tag on the merge
-commit. It never moves an existing tag — a version already tagged is a no-op,
+doesn't already exist on the remote, pushes an annotated tag on the commit
+that last changed `VERSION` (`git log -1 -- VERSION`), not the merge commit
+that triggered the run. It never moves an existing tag — a version already tagged is a no-op,
 and a malformed `VERSION` fails the workflow instead of tagging nothing.
 Repos upgrade by re-running stamp.sh (new PR).
 
