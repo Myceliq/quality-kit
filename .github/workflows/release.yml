@@ -1,0 +1,76 @@
+##
+# quality-kit release tagging: tag quality-kit-v<VERSION> on every push to main
+# that lands a VERSION bump. Manual tagging was the root cause of v0.5.4
+# merging and never being tagged — a stamped repo's CI resolves that tag at
+# checkout and fails. The decision (create/skip/invalid) lives in
+# bin/release-tag.sh, tested by bin/release-tag.test.sh; this workflow only
+# does the git/network side the script can't: list the remote's tags, and on
+# "create", push an annotated tag on the commit that triggered the run.
+##
+name: release-tag
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 — full history, not just github.sha. The tag has to land
+      # on the commit that actually SET VERSION to its current value, which is
+      # `git log -1 -- VERSION`, below. A shallow (depth-1) checkout would make
+      # that lookup see only the single fetched commit and misresolve it to
+      # whatever push happens to run this workflow, not the bump commit.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Tag quality-kit-v<VERSION> if it doesn't exist yet
+        run: |
+          set -euo pipefail
+          VERSION="$(cat VERSION)"
+          TAGS_FILE="$(mktemp)"
+          git ls-remote --tags --refs origin | sed 's#.*refs/tags/##' > "$TAGS_FILE"
+
+          decision="$(bin/release-tag.sh "$VERSION" "$TAGS_FILE")"
+          echo "release-tag: VERSION=$VERSION decision=$decision"
+
+          case "$decision" in
+            create)
+              # Tag the commit that actually introduced this VERSION value, not
+              # github.sha (the commit that happens to trigger this run). If the
+              # bump commit's own run failed or was skipped, a later, unrelated
+              # push would still see the tag absent and — tagging github.sha —
+              # would publish a release tag pointing at code the version bump
+              # never shipped. `git log -1 -- VERSION` is the most recent commit
+              # reachable from HEAD that touched the file; since nothing has
+              # touched it since (VERSION still reads the same value we just
+              # read), that commit is exactly the one that set it.
+              VERSION_SHA="$(git log -1 --format=%H -- VERSION)"
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              # Annotated tag on the version-bump commit, never moved once
+              # pushed: a plain (non-force) push to a refs/tags/* ref that
+              # already exists on the remote is rejected by git itself, so a
+              # race against another run can only fail closed, never overwrite.
+              git tag -a "quality-kit-v$VERSION" -m "quality-kit v$VERSION" "$VERSION_SHA"
+              git push origin "refs/tags/quality-kit-v$VERSION"
+              ;;
+            skip)
+              ;;
+            *)
+              # release-tag.sh exits 1 on "invalid" and set -e would already have
+              # stopped this script there; this arm only guards a future change
+              # that makes it print an unrecognised word without failing.
+              echo "release-tag: refusing to tag — VERSION='$VERSION' is not valid semver" >&2
+              exit 1
+              ;;
+          esac
