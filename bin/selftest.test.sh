@@ -22,6 +22,13 @@ tmpbase="$(mktemp -d)"
 cleanup() { rm -rf "$tmpbase"; }
 trap cleanup EXIT
 
+# The runner under test now refuses when the toolchain vars are unset, so every
+# fixture run below sets dummies. The fixtures are trivial scripts that never
+# read them — the vars only get the copied runner past its guard, the same way
+# CI's real values get the real runner past it. The missing-toolchain cases
+# strip them again with `env -u`.
+export OXLINT_BIN=/nonexistent/oxlint OXFMT_BIN=/nonexistent/oxfmt
+
 # --- one passing suite ---
 root="$tmpbase/pass"
 mkroot "$root"
@@ -112,6 +119,36 @@ if [ "$rc" -ne 0 ] && grep -q 'no \*\.test\.sh suites discovered' <<<"$out"; the
   ok "zero suites discovered fails closed"
 else
   bad "zero suites discovered fails closed" "rc=$rc out=$out"
+fi
+
+# --- a missing toolchain refuses loudly instead of passing as skips ---
+# The config-integration suites exit 0 printing SKIP when OXLINT_BIN/OXFMT_BIN
+# are unset, so without the guard a missing toolchain reads as a green run.
+# (TDD: this case failed before the guard existed — the copied runner exited 0.)
+root="$tmpbase/notoolchain"
+mkroot "$root"
+printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
+chmod +x "$root/skip.test.sh"
+rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN bash bin/selftest.sh 2>&1)" || rc=$?
+line="$(grep 'missing required toolchain' <<<"$out" || true)"
+if [ "$rc" -ne 0 ] && grep -q 'OXLINT_BIN' <<<"$line" && grep -q 'OXFMT_BIN' <<<"$line"; then
+  ok "missing toolchain refuses loudly, naming the toolchain"
+else
+  bad "missing toolchain refuses loudly" "rc=$rc out=$out"
+fi
+
+# --- the refusal names exactly the missing var ---
+# Matched on the `toolchain:` prefix, not the bare var name: the install hint
+# later in the same line names both vars either way.
+root="$tmpbase/halftoolchain"
+mkroot "$root"
+printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
+chmod +x "$root/skip.test.sh"
+rc=0; out="$(cd "$root" && env -u OXFMT_BIN bash bin/selftest.sh 2>&1)" || rc=$?
+if [ "$rc" -ne 0 ] && grep -qF 'toolchain: OXFMT_BIN (' <<<"$out"; then
+  ok "the refusal names exactly the missing var"
+else
+  bad "the refusal names exactly the missing var" "rc=$rc out=$out"
 fi
 
 [ "$fail" -eq 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

@@ -12,6 +12,20 @@ set -euo pipefail
 # `ROOT="$(cd bin/.. && pwd)"` yields "<path>\n<path>". A stamped repo's CI invokes
 # this as `bash .quality-kit-src/bin/selftest.sh` — relative — so the trigger is one
 # exported variable away in an environment the kit does not own.
+# `validate` is the kit's single self-gate command: it requires the pinned oxlint
+# toolchain and refuses loudly (non-zero, naming the missing toolchain) when it
+# is absent, instead of running the integration suites as silent skips. The four
+# suites below — ts/oxlint-clean, ts/oxfmt-clean, ts/oxlint-overrides,
+# ts/kit-checkout-ignored — each exit 0 printing SKIP when OXLINT_BIN/OXFMT_BIN
+# are unset, so without this guard a missing toolchain reads as a green run.
+missing=()
+[ -n "${OXLINT_BIN:-}" ] || missing+=("OXLINT_BIN")
+[ -n "${OXFMT_BIN:-}" ] || missing+=("OXFMT_BIN")
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "selftest: refusing — missing required toolchain: ${missing[*]} (install it exactly as .github/workflows/tests.yml does: npm ci in ci/oxlint-toolchain, then export OXLINT_BIN/OXFMT_BIN)" >&2
+  exit 1
+fi
+
 ROOT="$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
