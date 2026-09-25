@@ -353,13 +353,20 @@ stamp PR — most of them BLOCK a green stamp.
 
 ## Releasing
 
-Bump `VERSION`, merge to main, tag `quality-kit-v<VERSION>` on the merge
-commit, push the tag. Repos upgrade by re-running stamp.sh (new PR).
+Bump `VERSION` and merge; CI tags it. `.github/workflows/release.yml` runs
+`bin/release-tag.sh` on every push to main and, when `quality-kit-v<VERSION>`
+doesn't already exist on the remote, pushes an annotated tag on the commit
+that last changed `VERSION` (`git log -1 -- VERSION`), not the merge commit
+that triggered the run. It never moves an existing tag — a version already tagged is a no-op,
+and a malformed `VERSION` fails the workflow instead of tagging nothing.
+Repos upgrade by re-running stamp.sh (new PR).
 
 **The tag is the release.** A version that is merged but never tagged looks
 shipped and is not: stamped repos resolve `quality-kit-v<version>` and their
-CI fails at checkout. This has already happened once (v0.3.0). Before telling
-anyone a version exists, confirm `git rev-list -n1 quality-kit-v<version>`.
+CI fails at checkout. This has already happened twice (v0.3.0, v0.5.4) — the
+second time is why tagging is CI's job now, not a step a human remembers to
+run. Before telling anyone a version exists, confirm
+`git rev-list -n1 quality-kit-v<version>`.
 
 ## python-profile CI gap (v1)
 
