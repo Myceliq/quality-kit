@@ -40,8 +40,13 @@ PIN_PROFILE="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("prof
 [ -n "$PIN_VERSION" ] && [ -n "$PIN_PROFILE" ] \
   || { echo "bump-pin: $CONSUMER's .quality-kit.json has no version/profile" >&2; exit 1; }
 
-if [ "$PIN_VERSION" = "$LATEST_VERSION" ]; then
-  echo "bump-pin: $CONSUMER is already pinned to $LATEST_VERSION"
+# >=, not ==: a pin already AHEAD of what this run resolved as "latest" (a
+# tag deleted after the consumer bumped, or a momentarily stale remote) must
+# read as current too — an exact-equality check would "bump" that consumer
+# backward to an older tag, which is the opposite of this script's job.
+HIGHER_VERSION="$(printf '%s\n%s\n' "$PIN_VERSION" "$LATEST_VERSION" | sort -V | tail -1)"
+if [ "$HIGHER_VERSION" = "$PIN_VERSION" ]; then
+  echo "bump-pin: $CONSUMER is already at $PIN_VERSION (latest resolved: $LATEST_VERSION)"
   exit 3
 fi
 

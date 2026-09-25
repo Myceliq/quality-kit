@@ -114,8 +114,11 @@ chmod +x "$STUBBIN/gh"
 CASE_OUT="" CASE_RC=0 CASE_LOG="" CASE_CONSUMER_BARE=""
 run_case() { # pin_version pin_profile open_prs branch_exists
   local pin_version="$1" pin_profile="$2" open_prs="$3" branch_exists="$4"
-  CASE_LOG="$(mktemp)"
-  CASE_CONSUMER_BARE="$(mktemp -d)/consumer.git"
+  # Under $WORKROOT, not the system temp root: cleanup_all's `rm -r
+  # "$WORKROOT"` then reaps every case's log and bare repo too, instead of
+  # leaking one mktemp -d per run_case call.
+  CASE_LOG="$(mktemp "$WORKROOT/case-XXXXXX.log")"
+  CASE_CONSUMER_BARE="$(mktemp -d "$WORKROOT/case-XXXXXX")/consumer.git"
   "$REAL_GIT" clone -q --bare "$CONSUMER_SRC" "$CASE_CONSUMER_BARE"
   "$REAL_GIT" -C "$CASE_CONSUMER_BARE" config core.hooksPath /dev/null
   local pin_b64
@@ -135,6 +138,11 @@ rc=0; out="$(bash "$BP" 2>&1)" || rc=$?
 run_case 9.9.9 node 0 0
 [ "$CASE_RC" = 3 ] && ok "current pin exits 3" || bad "current pin exits 3" "rc=$CASE_RC out=$CASE_OUT"
 [ -s "$CASE_LOG" ] && bad "current pin does no clone" "log: $(cat "$CASE_LOG")" || ok "current pin does no clone"
+
+# --- 3: pin already AHEAD of the resolved latest (never downgrade) ----------
+run_case 9.9.10 node 0 0
+[ "$CASE_RC" = 3 ] && ok "ahead-of-latest pin exits 3" || bad "ahead-of-latest pin exits 3" "rc=$CASE_RC out=$CASE_OUT"
+[ -s "$CASE_LOG" ] && bad "ahead-of-latest pin does no clone" "log: $(cat "$CASE_LOG")" || ok "ahead-of-latest pin does no clone"
 
 # --- 0, no clone: an open bump PR already exists -----------------------------
 run_case 9.9.8 node 1 0
