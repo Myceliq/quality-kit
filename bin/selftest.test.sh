@@ -28,6 +28,10 @@ trap cleanup EXIT
 # CI's real values get the real runner past it. The missing-toolchain cases
 # strip them again with `env -u`.
 export OXLINT_BIN=/nonexistent/oxlint OXFMT_BIN=/nonexistent/oxfmt
+# The guard's opt-out must never leak INTO a fixture from this suite's own
+# environment: under `KIT_SELFTEST_NO_TOOLCHAIN=1 make validate` (the stamped
+# consumer shape) the refusal cases below would inherit the opt-out and pass
+# vacuously. Stripped per-case beside the toolchain vars, never exported here.
 
 # --- one passing suite ---
 root="$tmpbase/pass"
@@ -129,7 +133,7 @@ root="$tmpbase/notoolchain"
 mkroot "$root"
 printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
 chmod +x "$root/skip.test.sh"
-rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN bash bin/selftest.sh 2>&1)" || rc=$?
+rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN -u KIT_SELFTEST_NO_TOOLCHAIN bash bin/selftest.sh 2>&1)" || rc=$?
 line="$(grep 'missing required toolchain' <<<"$out" || true)"
 if [ "$rc" -ne 0 ] && grep -q 'OXLINT_BIN' <<<"$line" && grep -q 'OXFMT_BIN' <<<"$line"; then
   ok "missing toolchain refuses loudly, naming the toolchain"
@@ -144,11 +148,41 @@ root="$tmpbase/halftoolchain"
 mkroot "$root"
 printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
 chmod +x "$root/skip.test.sh"
-rc=0; out="$(cd "$root" && env -u OXFMT_BIN bash bin/selftest.sh 2>&1)" || rc=$?
+rc=0; out="$(cd "$root" && env -u OXFMT_BIN -u KIT_SELFTEST_NO_TOOLCHAIN bash bin/selftest.sh 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ] && grep -qF 'toolchain: OXFMT_BIN (' <<<"$out"; then
   ok "the refusal names exactly the missing var"
 else
   bad "the refusal names exactly the missing var" "rc=$rc out=$out"
+fi
+
+# --- the explicit opt-out keeps skip semantics for the stamped pre-install step ---
+# The stamped consumer `Kit self-test` step sets KIT_SELFTEST_NO_TOOLCHAIN=1: it runs
+# before install and can never have a toolchain. Opt-out is a NAMED var, never mere
+# absence — the case above (absence refuses) and this one (named opt-out skips) are
+# the paired arms, differing only in the env payload.
+root="$tmpbase/optout"
+mkroot "$root"
+printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
+chmod +x "$root/skip.test.sh"
+rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN KIT_SELFTEST_NO_TOOLCHAIN=1 bash bin/selftest.sh 2>&1)" || rc=$?
+if [ "$rc" -eq 0 ] && grep -q '1 suite(s) ran, 0 failed' <<<"$out"; then
+  ok "explicit opt-out keeps skip semantics without a toolchain"
+else
+  bad "explicit opt-out keeps skip semantics without a toolchain" "rc=$rc out=$out"
+fi
+
+# --- an empty opt-out is NOT an opt-out ---
+# KIT_SELFTEST_NO_TOOLCHAIN="" must refuse exactly like unset: otherwise an exported-but-empty
+# var in some CI environment silently re-opens the #40 hole.
+root="$tmpbase/emptyoptout"
+mkroot "$root"
+printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
+chmod +x "$root/skip.test.sh"
+rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN KIT_SELFTEST_NO_TOOLCHAIN="" bash bin/selftest.sh 2>&1)" || rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'missing required toolchain' <<<"$out"; then
+  ok "empty opt-out still refuses"
+else
+  bad "empty opt-out still refuses" "rc=$rc out=$out"
 fi
 
 [ "$fail" -eq 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

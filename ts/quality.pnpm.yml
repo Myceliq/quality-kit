@@ -58,8 +58,11 @@ jobs:
       # code under test. Running the pinned checkout's own suites here closes that
       # gap: pinned gates, and they function on this runner. quality-kit#22.
       # Before install on purpose — it needs only bash, git and python3, so a red
-      # kit is reported without spending an install first. The ts/*.test.sh suites
-      # SKIP without OXLINT_BIN rather than passing silently.
+      # kit is reported without spending an install first. KIT_SELFTEST_NO_TOOLCHAIN=1
+      # is the explicit opt-out of selftest's toolchain guard: this step can never
+      # have a toolchain (nothing is installed yet), so it keeps the skip semantics
+      # for the ts/*.test.sh suites rather than refusing. Absence of OXLINT_BIN alone
+      # is NOT the opt-out — that refuses, which is what the kit's own gate relies on.
       #
       # The git identity is set for the same reason the kit's own tests.yml sets it:
       # two fixture commits in hooks/hooks.test.sh do not pass `-c user.name/-c
@@ -74,7 +77,7 @@ jobs:
           git config --global user.email ci@example.com
           git config --global user.name ci
           git config --global init.defaultBranch main
-          bash .quality-kit-src/bin/selftest.sh
+          KIT_SELFTEST_NO_TOOLCHAIN=1 bash .quality-kit-src/bin/selftest.sh
 
       # pnpm is not on the runner image. Corepack ships with Node, so enabling it
       # costs no third-party action and no new pinned SHA. It has to run BEFORE

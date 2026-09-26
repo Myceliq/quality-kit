@@ -18,12 +18,19 @@ set -euo pipefail
 # suites below — ts/oxlint-clean, ts/oxfmt-clean, ts/oxlint-overrides,
 # ts/kit-checkout-ignored — each exit 0 printing SKIP when OXLINT_BIN/OXFMT_BIN
 # are unset, so without this guard a missing toolchain reads as a green run.
-missing=()
-[ -n "${OXLINT_BIN:-}" ] || missing+=("OXLINT_BIN")
-[ -n "${OXFMT_BIN:-}" ] || missing+=("OXFMT_BIN")
-if [ "${#missing[@]}" -gt 0 ]; then
-  echo "selftest: refusing — missing required toolchain: ${missing[*]} (install it exactly as .github/workflows/tests.yml does: npm ci in ci/oxlint-toolchain, then export OXLINT_BIN/OXFMT_BIN)" >&2
-  exit 1
+# KIT_SELFTEST_NO_TOOLCHAIN=1 opts OUT explicitly (the stamped consumer `Kit
+# self-test` step sets it: that step runs before install on purpose and can never
+# have a toolchain). Opt-out is a NAMED var, never mere absence — absence-is-skip
+# is the hole this guard closes (#40), and the opt-out keeps working when set to
+# any non-empty value so callers need not agree on a spelling.
+if [ -z "${KIT_SELFTEST_NO_TOOLCHAIN:-}" ]; then
+  missing=()
+  [ -n "${OXLINT_BIN:-}" ] || missing+=("OXLINT_BIN")
+  [ -n "${OXFMT_BIN:-}" ] || missing+=("OXFMT_BIN")
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "selftest: refusing — missing required toolchain: ${missing[*]} (install it exactly as .github/workflows/tests.yml does: npm ci in ci/oxlint-toolchain, then export OXLINT_BIN/OXFMT_BIN)" >&2
+    exit 1
+  fi
 fi
 
 ROOT="$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
