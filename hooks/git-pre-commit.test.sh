@@ -54,6 +54,21 @@ rc=0; (cd "$Q" && echo x > f.txt && git add f.txt && bash "$HOOK" 2>/dev/null) |
 [ "$rc" != 0 ] && ok "quoted repo path still resolves runner (blocked as make, not npm no-op)" \
   || bad "quoted repo path still resolves runner" "allowed (runner detection silently fell back to npm)"
 
+# Regression (#207): `git commit -a` / pathspec commits run hooks with GIT_INDEX_FILE pointing at
+# a TEMPORARY index — the real .git/index is never touched. Simulated here by staging against an
+# alternate index file rather than the default one, exactly as git does for those commit forms.
+# validate:fast's Makefile reads $QK_STAGED_FILES (written before the hook's git-context scrub)
+# instead of re-querying `git diff --cached`, which would see the untouched real index and find
+# nothing staged.
+S="$(mk 0)"
+printf 'validate-fast:\n\t@grep -qz staged.py "$$QK_STAGED_FILES"\n' > "$S/Makefile"
+(cd "$S" && echo x > staged.py)
+ALT_INDEX="$T/alt-index-$$"
+(cd "$S" && GIT_INDEX_FILE="$ALT_INDEX" git add staged.py)
+rc=0; (cd "$S" && GIT_INDEX_FILE="$ALT_INDEX" bash "$HOOK" 2>/dev/null) || rc=$?
+[ "$rc" = 0 ] && ok "validate-fast sees files staged via an alternate GIT_INDEX_FILE (-a/pathspec commits)" \
+  || bad "validate-fast sees files staged via an alternate GIT_INDEX_FILE (-a/pathspec commits)" "blocked (QK_STAGED_FILES did not reflect the active index)"
+
 # --- Verdict parsing --------------------------------------------------------
 #
 # Every case below is a commit that DID pass while the hook printed a success
