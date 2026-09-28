@@ -79,4 +79,46 @@ else
   bad "pre-set vars skip the install" "rc=$rc out=$out"
 fi
 
+# --- partial preset: the set var survives, the missing one resolves locally ---
+# CodeRabbit #56: when only one var is unset, the recipe must not overwrite the
+# preset var with a local path. Proved through the copied selftest's guard: the
+# preset var is real-named but dangling, so the ONLY way this run greens is the
+# recipe installing (stub npm) and exporting OXFMT_BIN at the installed bin while
+# OXLINT_BIN keeps its preset value — observed via the install line + green gate.
+# (The dangling preset value itself is never executed by the trivial fixture.)
+root="$tmpbase/partial"
+mkfixture "$root"
+export STUB_LOG="$root/stub.log" PATH="$root/stubbin:$PATH"
+rc=0; out="$(cd "$root" && OXLINT_BIN=/preset/oxlint env -u OXFMT_BIN -u KIT_SELFTEST_NO_TOOLCHAIN make validate 2>&1)" || rc=$?
+# NOTE: `VAR=x env -u OTHER cmd` — the -u flags must come after VAR=x assignments
+# on the env command line, else env treats them as variable names to set.
+if [ "$rc" -eq 0 ] && grep -q 'installing from the pinned lockfile' <<<"$out" \
+   && grep -q '1 suite(s) ran, 0 failed' <<<"$out"; then
+  ok "partial preset installs the missing half and gates green"
+else
+  bad "partial preset installs the missing half" "rc=$rc out=$out"
+fi
+
+# --- a failed install is terminal, not a silent fallthrough ---
+# Panel #56 (bugs, medium): make recipes run without -e, so a bare `;` after
+# `npm ci` would proceed to export paths at bins that were never installed. The
+# stub npm here exits 1 WITHOUT materialising bins; the recipe must exit non-zero
+# and must NOT reach the gate (no `suite(s) ran` line at all).
+root="$tmpbase/failinstall"
+mkfixture "$root"
+cat > "$root/stubbin/npm" <<'EOF'
+#!/usr/bin/env bash
+echo "stub-npm $* (failing)" >> "$STUB_LOG"
+exit 1
+EOF
+chmod +x "$root/stubbin/npm"
+export STUB_LOG="$root/stub.log" PATH="$root/stubbin:$PATH"
+rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN -u KIT_SELFTEST_NO_TOOLCHAIN make validate 2>&1)" || rc=$?
+if [ "$rc" -ne 0 ] && grep -q 'installing from the pinned lockfile' <<<"$out" \
+   && ! grep -q 'suite(s) ran' <<<"$out"; then
+  ok "failed install is terminal and never reaches the gate"
+else
+  bad "failed install is terminal" "rc=$rc out=$out"
+fi
+
 [ "$fail" -eq 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

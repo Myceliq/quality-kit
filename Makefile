@@ -17,25 +17,22 @@
 # the install entirely; otherwise the pinned lockfile in ci/oxlint-toolchain is
 # installed with the same `npm ci` CI runs. The guard in selftest.sh is FED, not
 # bypassed: invoking selftest.sh directly without the vars still refuses.
+# Two review findings shaped this recipe (PR #56): a failed `npm ci` must be
+# terminal (`|| exit 1` — make recipes run without `-e`, so a bare `;` would
+# proceed to export paths at bins that were never installed and misdiagnose),
+# and a PARTIAL preset (one var set, one unset) keeps the preset var rather
+# than overwriting both (`${VAR:-default}` per var, not an either/or branch).
 TOOLCHAIN_BIN := ci/oxlint-toolchain/node_modules/.bin
 .PHONY: validate validate-fast
 validate:
-	@if [ -z "$${OXLINT_BIN:-}" ] || [ -z "$${OXFMT_BIN:-}" ]; then \
-	  if [ ! -x "$(TOOLCHAIN_BIN)/oxlint" ] || [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]; then \
-	    echo "[make] toolchain missing — installing from the pinned lockfile..."; \
-	    (cd ci/oxlint-toolchain && npm ci --no-audit --no-fund); \
-	  fi; \
-	  OXLINT_BIN="$(CURDIR)/$(TOOLCHAIN_BIN)/oxlint" OXFMT_BIN="$(CURDIR)/$(TOOLCHAIN_BIN)/oxfmt" bash bin/selftest.sh; \
-	else \
-	  bash bin/selftest.sh; \
-	fi
+	@if ([ -z "$${OXLINT_BIN:-}" ] || [ -z "$${OXFMT_BIN:-}" ]) && ([ ! -x "$(TOOLCHAIN_BIN)/oxlint" ] || [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]); then \
+	  echo "[make] toolchain missing — installing from the pinned lockfile..."; \
+	  (cd ci/oxlint-toolchain && npm ci --no-audit --no-fund) || exit 1; \
+	fi; \
+	OXLINT_BIN="$${OXLINT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxlint}" OXFMT_BIN="$${OXFMT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxfmt}" bash bin/selftest.sh
 validate-fast:
-	@if [ -z "$${OXLINT_BIN:-}" ] || [ -z "$${OXFMT_BIN:-}" ]; then \
-	  if [ ! -x "$(TOOLCHAIN_BIN)/oxlint" ] || [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]; then \
-	    echo "[make] toolchain missing — installing from the pinned lockfile..."; \
-	    (cd ci/oxlint-toolchain && npm ci --no-audit --no-fund); \
-	  fi; \
-	  OXLINT_BIN="$(CURDIR)/$(TOOLCHAIN_BIN)/oxlint" OXFMT_BIN="$(CURDIR)/$(TOOLCHAIN_BIN)/oxfmt" bash bin/selftest.sh; \
-	else \
-	  bash bin/selftest.sh; \
-	fi
+	@if ([ -z "$${OXLINT_BIN:-}" ] || [ -z "$${OXFMT_BIN:-}" ]) && ([ ! -x "$(TOOLCHAIN_BIN)/oxlint" ] || [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]); then \
+	  echo "[make] toolchain missing — installing from the pinned lockfile..."; \
+	  (cd ci/oxlint-toolchain && npm ci --no-audit --no-fund) || exit 1; \
+	fi; \
+	OXLINT_BIN="$${OXLINT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxlint}" OXFMT_BIN="$${OXFMT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxfmt}" bash bin/selftest.sh
