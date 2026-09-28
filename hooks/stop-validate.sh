@@ -7,7 +7,29 @@
 #       blocked round to avoid livelock — pre-commit and CI still gate behind it.
 set -uo pipefail
 payload="$(cat 2>/dev/null || true)"
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+
+# Resolve the repo from the SESSION'S cwd, not the hook process's own.
+#
+# Both runtimes launch a Stop hook with cwd set to the PROJECT dir, which is not necessarily the
+# tree the session edited: a session working in a linked worktree — or in a different repo
+# entirely — would otherwise have the project dir validated, and every dirty file there
+# attributed to it. On a box where several sessions share one primary checkout, that makes a
+# peer's in-flight work block a session that never opened those files, and the message it prints
+# ("fix before ending the turn") tells that session to fix work it does not own. Reproduced:
+# a clean session worktree, a project dir carrying an unrelated session's broken untracked file,
+# and this gate exits 2.
+#
+# Falls back to the hook's own cwd whenever the payload carries no usable directory, so a runtime
+# that omits the field, or names one that has since been removed, behaves exactly as before.
+session_cwd="$(printf '%s' "$payload" | python3 -c "import json,sys
+try: print(json.load(sys.stdin).get('cwd','') or '')
+except Exception: print('')" 2>/dev/null)"
+root=""
+if [ -n "$session_cwd" ] && [ -d "$session_cwd" ]; then
+  root="$(git -C "$session_cwd" rev-parse --show-toplevel 2>/dev/null)" || root=""
+fi
+[ -n "$root" ] || root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$root" ] || exit 0
 cd "$root" || exit 0
 [ -f .quality-kit.json ] || exit 0
 

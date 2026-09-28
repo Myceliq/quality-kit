@@ -243,23 +243,38 @@ if [ -n "$QK_ROOT" ] && [ -f "$QK_ROOT/.quality-kit.json" ]; then
 
   QK_RUNNER="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('runner','npm'))" "$QK_ROOT/.quality-kit.json" 2>/dev/null || echo npm)"
   echo "[quality-kit] validate:fast (runner: $QK_RUNNER)..."
+
+  # `git commit -a` and `git commit -- <pathspec>` run hooks against a TEMPORARY index that git
+  # points GIT_INDEX_FILE at, built to include the auto-staged changes — the real .git/index is
+  # never touched. Query it for the staged file list HERE, before GIT_INDEX_FILE is scrubbed
+  # below, and hand it to the runner explicitly. Without this, a runner recipe that re-queries
+  # `git diff --cached` for itself (as software-factory's `validate-fast` does, to lint only
+  # staged Python) reads the real index after the scrub — which -a/pathspec commits never
+  # touched — and sees nothing staged (#207).
+  QK_STAGED_FILES="$(mktemp /tmp/qk-staged-files.XXXXXX)"
+  git diff --cached --name-only -z --diff-filter=ACMR >"$QK_STAGED_FILES" 2>/dev/null || true
+
   # Scrub the inherited git context, exactly as the Codex call below already does.
   # git exports GIT_DIR/GIT_INDEX_FILE to every hook, and validate:fast runs the
   # repo's OWN test suite — any test that shells out to git in a temp repo then
   # silently operates on THIS repo instead. That is not hypothetical: it fails 45
   # of harness's tests, and only ever inside a commit, so the suite looks broken
-  # rather than mis-scoped.
+  # rather than mis-scoped. QK_STAGED_FILES is a plain path, not git context, so it
+  # is passed through rather than scrubbed.
   QK_GIT_SCRUB=(env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_PREFIX
                 -u GIT_AUTHOR_DATE -u GIT_AUTHOR_NAME -u GIT_AUTHOR_EMAIL
-                -u GIT_EDITOR -u GIT_CONFIG_PARAMETERS)
+                -u GIT_EDITOR -u GIT_CONFIG_PARAMETERS
+                QK_STAGED_FILES="$QK_STAGED_FILES")
+  QK_VALIDATE_RC=0
   case "$QK_RUNNER" in
-    npm)  (cd "$QK_ROOT" && "${QK_GIT_SCRUB[@]}" npm run --silent validate:fast) ;;
-    make) (cd "$QK_ROOT" && "${QK_GIT_SCRUB[@]}" make validate-fast) ;;
-    *)    true ;;
-  esac || {
+    npm)  (cd "$QK_ROOT" && "${QK_GIT_SCRUB[@]}" npm run --silent validate:fast) || QK_VALIDATE_RC=$? ;;
+    make) (cd "$QK_ROOT" && "${QK_GIT_SCRUB[@]}" make validate-fast) || QK_VALIDATE_RC=$? ;;
+  esac
+  rm -f "$QK_STAGED_FILES"
+  if [ "$QK_VALIDATE_RC" -ne 0 ]; then
     echo "[quality-kit] BLOCKED — validate:fast failed. Fix and retry the commit." >&2
     exit 1
-  }
+  fi
 fi
 
 # --- Codex pre-commit review hook (global) ---

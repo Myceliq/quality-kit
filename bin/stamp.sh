@@ -322,16 +322,74 @@ if profile != "python":
     # tsconfig.json: point extends at the stamped fragment, preserving any
     # pre-existing chain (TS 5+ array form, quality fragment last so its
     # strict flags still govern)
+    # tsconfig is JSONC (tsc accepts // and /* */ comments and trailing
+    # commas), so it is read tolerantly — same semantics as check-drift.sh's
+    # jsonc(), repeated here because the two heredocs share no module. The
+    # scanner is string-aware: "./src/*" holds a /* that is not a comment.
+    def scan(s, on_char):
+        out, i, n, in_str, esc = [], 0, len(s), False, False
+        while i < n:
+            c = s[i]
+            if in_str:
+                out.append(c); i += 1
+                if esc: esc = False
+                elif c == "\\": esc = True
+                elif c == '"': in_str = False
+            elif c == '"':
+                in_str = True; out.append(c); i += 1
+            else:
+                i = on_char(out, s, i, n)
+        return "".join(out)
+    def drop_comment(out, s, i, n):
+        if s[i:i+2] == "//":
+            k = s.find("\n", i); return n if k == -1 else k
+        if s[i:i+2] == "/*":
+            k = s.find("*/", i + 2); return n if k == -1 else k + 2
+        out.append(s[i]); return i + 1
+    def drop_trailing_comma(out, s, i, n):
+        if s[i] == ",":
+            k = i + 1
+            while k < n and s[k] in " \t\r\n": k += 1
+            if k < n and s[k] in "}]": return i + 1
+        out.append(s[i]); return i + 1
+    jsonc = lambda s: json.loads(scan(scan(s, drop_comment), drop_trailing_comma))
+
+    Q = "./tsconfig.quality.json"
     ts_path = os.path.join(repo, "tsconfig.json")
-    ts = j(ts_path)
+    raw = open(ts_path).read() if os.path.exists(ts_path) else "{}"
+    ts = jsonc(raw)
     prev = ts.get("extends")
-    if prev and prev != "./tsconfig.quality.json":
+    if prev and prev != Q:
         prevs = prev if isinstance(prev, list) else [prev]
-        prevs = [p for p in prevs if p != "./tsconfig.quality.json"]
-        ts["extends"] = prevs + ["./tsconfig.quality.json"]
+        want = [p for p in prevs if p != Q] + [Q]
     else:
-        ts["extends"] = "./tsconfig.quality.json"
-    w(ts_path, ts)
+        want = Q
+    if want == prev:
+        pass  # already correct: leave the file byte-identical
+    elif scan(raw, drop_comment) == raw:
+        ts["extends"] = want  # no comments to lose: plain JSON rewrite
+        w(ts_path, ts)
+    elif "extends" in ts:
+        # rewriting an arbitrary value textually is guesswork, and a json
+        # rewrite would silently delete a human's comments — refuse instead
+        sys.exit(f"stamp: {ts_path} has comments and \"extends\": {json.dumps(prev)}; "
+                 f"set it by hand to \"extends\": {json.dumps(want)} and re-stamp "
+                 "(the stamper will not rewrite a commented tsconfig)")
+    else:
+        # no extends key: insert one right after the root {, every other byte
+        # kept. Only whitespace and comments can precede the root { (jsonc()
+        # just parsed an object), so skip those to find it.
+        i = 0
+        while raw[i] != "{":
+            if raw.startswith("//", i): i = raw.index("\n", i)
+            elif raw.startswith("/*", i): i = raw.index("*/", i) + 2
+            else: i += 1
+        out = raw[:i + 1] + f'\n  "extends": "{Q}",' + raw[i + 1:]
+        got = jsonc(out)
+        if got.get("extends") != Q or {k: v for k, v in got.items() if k != "extends"} != ts:
+            sys.exit(f"stamp: inserting extends into {ts_path} did not verify; "
+                     f"add \"extends\": \"{Q}\" by hand and re-stamp")
+        open(ts_path, "w").write(out)
 
 # .claude/settings.json: deep-merge the hooks fragment (kit entries replace
 # same-event entries whose command mentions .quality/, others preserved)

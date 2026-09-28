@@ -3,6 +3,14 @@
 # Why:  this is the unforgeable gate — every bypass an agent could attempt
 #       must be a covered case here.
 set -euo pipefail
+# Cleared for the WHOLE suite, not per-test — the same reasoning loc-budget.test.sh records
+# for its own copy of this line (#15). `check-drift.sh` now skips the suppression budget
+# under `FACTORY_GATE=1` (#35), and the kit self-test (#22) can run this suite inside the
+# gate container, which injects exactly that. Inherited, it would turn "new suppression over
+# budget caught" into a silent pass — a bypass test that stops testing the bypass. The two
+# tests that WANT gate mode set the flag on their own command line, so clearing it here
+# cannot mask what they measure.
+unset FACTORY_GATE
 DIR="$(cd "$(dirname "$0")" && pwd)"
 KITROOT="$(cd "$DIR/.." && pwd)"
 CD="$DIR/check-drift.sh"
@@ -60,6 +68,44 @@ echo "$out" | grep -q "DRIFT.*validate" && ok "rewired validate script caught" |
 R="$(fresh)"; printf '// @ts-ignore\nconst q=1;\n' > "$R/new.ts"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*suppression" && ok "new suppression over budget caught" || bad "new suppression over budget caught" "$out"
+
+# --- #35: the suppression budget is unmeasurable inside the factory gate ---
+# The gate mounts a snapshot of one commit with NO `.git`, and `count-suppressions.sh`
+# enumerates through `git ls-files`. Deleting `.git` from a stamped fixture is that shape.
+# Both directions are armed: the flag must skip, and its ABSENCE must still red — otherwise
+# the arm above could be passing for a reason that has nothing to do with the flag.
+R="$(fresh)"; rm -r "$R/.git"
+out="$(FACTORY_GATE=1 KIT_DIR="$KITROOT" bash "$CD" "$R" 2>&1 || true)"
+echo "$out" | grep -q "suppression budget unmeasurable in gate" \
+  && ok "#35 gate skip is named" || bad "#35 gate skip is named" "$out"
+echo "$out" | grep -q "internal gate error" \
+  && bad "#35 gate skip must clear the CalledProcessError" "$out" \
+  || ok "#35 gate skip clears the CalledProcessError"
+
+# The under-fire arm. Without the flag the same tree still reds — which is both the
+# original defect reproduced and proof the skip cannot be reached by a git failure alone.
+out="$(FACTORY_GATE= KIT_DIR="$KITROOT" bash "$CD" "$R" 2>&1 || true)"
+echo "$out" | grep -q "internal gate error" \
+  && ok "#35 no-flag: a git-less tree still reds" || bad "#35 no-flag: a git-less tree still reds" "$out"
+echo "$out" | grep -q "suppression budget unmeasurable in gate" \
+  && bad "#35 skip must not fire without the flag" "$out" \
+  || ok "#35 skip does not fire without the flag"
+
+# The half that makes "enforced in CI" a claim rather than a reassurance: the stamped
+# workflows must never put FACTORY_GATE in the environment of the steps that run this
+# script, or the skip above would silently disarm the budget on the path that decides a
+# merge. Comment lines are stripped first — quality.npm.yml discusses the flag in prose
+# (the #22 note above the self-test step), and matching that would pass on the word while
+# missing a real assignment.
+for wf in "$KITROOT"/ts/quality.*.yml; do
+  # Same filter for the detection and for the message. A `grep -n` over the raw file would
+  # report the prose hit on line 57 as the offender while the real assignment sits
+  # elsewhere — a diagnostic that points the reader away from the defect it just caught.
+  hits="$(grep -n "FACTORY_GATE" "$wf" | grep -v ':[[:space:]]*#' || true)"
+  [ -n "$hits" ] \
+    && bad "#35 $(basename "$wf") must not set FACTORY_GATE" "$hits" \
+    || ok "#35 $(basename "$wf") leaves FACTORY_GATE unset"
+done
 
 R="$(fresh)"   # merged .claude/settings.json must keep the kit hooks
 python3 -c "

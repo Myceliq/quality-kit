@@ -1203,14 +1203,40 @@ def main():
             if not any(covers(e) for e in cs.get("hooks", {}).get(event, [])):
                 err(f".claude/settings.json lost or altered the kit {event} hook — re-stamp to restore")
 
-    base = json.load(open(os.path.join(repo, ".quality/suppression-baseline.json")))
-    import subprocess
-    now = json.loads(subprocess.run(
-        ["bash", os.path.join(kit, "bin/count-suppressions.sh"), repo],
-        capture_output=True, text=True, check=True).stdout)
-    for k, allowed in base.items():
-        if now.get(k, 0) > allowed:
-            err(f"suppression budget exceeded: {k} {now[k]} > baseline {allowed} — remove them or bump .quality/suppression-baseline.json in this PR with justification")
+    # The suppression budget is UNMEASURABLE inside the factory gate, for the same reason
+    # the SLOC budget is (#15): the gate mounts a snapshot of one commit with no `.git`, and
+    # `count-suppressions.sh` enumerates through `git ls-files`. That script refuses rather
+    # than counting zero tracked files, which is the correct posture in CI and is a
+    # `CalledProcessError` here — caught by main()'s handler below and reported as
+    # `internal gate error`, so the whole drift gate reds and `--ratchet` never runs at all.
+    # Measured on Myceliq/booking-platform @ 3109e79 through the factory's own gate.
+    #
+    # Gate-ness is read from the flag the gate INJECTS, never inferred from git failing:
+    # inferring it would let a broken git anywhere else silently disarm the budget, which is
+    # the failure mode the check exists to prevent (#15's reasoning, unchanged).
+    #
+    # The skip is NAMED and loud rather than an empty count. Handing the loop `{}` would
+    # iterate nothing and pass — an unmeasured budget reading as a clean one, which is the
+    # same silent-skip hole #278 found in the "quality-kit not found locally" path.
+    #
+    # "enforced in CI" is a checkable claim, not a reassurance, and this is where it is
+    # checked. `ts/quality.npm.yml:52` ("Drift gate") runs `check-drift.sh .` — the pass this
+    # block lives in — with no `FACTORY_GATE` in its environment, and `:88` runs `--ratchet`
+    # the same way. Setting the flag there means editing `.github/workflows/quality.yml`,
+    # which line 75 above byte-compares against the kit's own copy: the tamper reds this very
+    # script. So the flag can suppress this budget on a developer's box and inside the gate
+    # container, and cannot suppress it on the path that decides a merge.
+    if os.environ.get("FACTORY_GATE") == "1":
+        print("suppression budget unmeasurable in gate — enforced in CI", file=sys.stderr)
+    else:
+        base = json.load(open(os.path.join(repo, ".quality/suppression-baseline.json")))
+        import subprocess
+        now = json.loads(subprocess.run(
+            ["bash", os.path.join(kit, "bin/count-suppressions.sh"), repo],
+            capture_output=True, text=True, check=True).stdout)
+        for k, allowed in base.items():
+            if now.get(k, 0) > allowed:
+                err(f"suppression budget exceeded: {k} {now[k]} > baseline {allowed} — remove them or bump .quality/suppression-baseline.json in this PR with justification")
 
 try:
     main()
