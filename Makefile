@@ -22,16 +22,20 @@
 # proceed to export paths at bins that were never installed and misdiagnose),
 # and a PARTIAL preset (one var set, one unset) keeps the preset var rather
 # than overwriting both (`${VAR:-default}` per var, not an either/or branch).
+# The install check is PAIRED per tool (CR #56 r2): install iff (var unset AND
+# local bin missing) for the SAME tool — a preset tool whose local bin is absent
+# must never trigger `npm ci`, or validation fails offline to install a bin
+# nobody will use.
 TOOLCHAIN_BIN := ci/oxlint-toolchain/node_modules/.bin
 .PHONY: validate validate-fast
 validate:
-	@if ([ -z "$${OXLINT_BIN:-}" ] || [ -z "$${OXFMT_BIN:-}" ]) && ([ ! -x "$(TOOLCHAIN_BIN)/oxlint" ] || [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]); then \
+	@if ([ -z "$${OXLINT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxlint" ]) || ([ -z "$${OXFMT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]); then \
 	  echo "[make] toolchain missing — installing from the pinned lockfile..."; \
 	  (cd ci/oxlint-toolchain && npm ci --no-audit --no-fund) || exit 1; \
 	fi; \
 	OXLINT_BIN="$${OXLINT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxlint}" OXFMT_BIN="$${OXFMT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxfmt}" bash bin/selftest.sh
 validate-fast:
-	@if ([ -z "$${OXLINT_BIN:-}" ] || [ -z "$${OXFMT_BIN:-}" ]) && ([ ! -x "$(TOOLCHAIN_BIN)/oxlint" ] || [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]); then \
+	@if ([ -z "$${OXLINT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxlint" ]) || ([ -z "$${OXFMT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]); then \
 	  echo "[make] toolchain missing — installing from the pinned lockfile..."; \
 	  (cd ci/oxlint-toolchain && npm ci --no-audit --no-fund) || exit 1; \
 	fi; \

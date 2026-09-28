@@ -7,7 +7,9 @@
 #       already exported them.
 set -euo pipefail
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
+# `CDPATH=` for the same reason selftest.sh documents: with CDPATH exported and a
+# RELATIVE cd argument, bash prints the resolved dir and DIR comes out doubled.
+DIR="$(CDPATH= cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/.." && pwd)"
 fail=0
 ok()  { echo "PASS $1"; }
@@ -81,22 +83,25 @@ fi
 
 # --- partial preset: the set var survives, the missing one resolves locally ---
 # CodeRabbit #56: when only one var is unset, the recipe must not overwrite the
-# preset var with a local path. Proved through the copied selftest's guard: the
-# preset var is real-named but dangling, so the ONLY way this run greens is the
-# recipe installing (stub npm) and exporting OXFMT_BIN at the installed bin while
-# OXLINT_BIN keeps its preset value — observed via the install line + green gate.
-# (The dangling preset value itself is never executed by the trivial fixture.)
+# preset var with a local path. The fixture suite ECHOES both vars (panel #56 r2:
+# the previous oracle only asserted install-ran + green, which a regressed recipe
+# overwriting both vars would also satisfy — the value must be observed, not just
+# the exit code). The recipe's prefix assignments export into selftest.sh, which
+# runs suites with `bash "$suite"`, so both values reach the fixture.
 root="$tmpbase/partial"
 mkfixture "$root"
+printf '%s\n' 'echo "OXLINT_BIN=$OXLINT_BIN"; echo "OXFMT_BIN=$OXFMT_BIN"' > "$root/fixture.test.sh"
 export STUB_LOG="$root/stub.log" PATH="$root/stubbin:$PATH"
 rc=0; out="$(cd "$root" && OXLINT_BIN=/preset/oxlint env -u OXFMT_BIN -u KIT_SELFTEST_NO_TOOLCHAIN make validate 2>&1)" || rc=$?
 # NOTE: `VAR=x env -u OTHER cmd` — the -u flags must come after VAR=x assignments
 # on the env command line, else env treats them as variable names to set.
 if [ "$rc" -eq 0 ] && grep -q 'installing from the pinned lockfile' <<<"$out" \
+   && grep -q 'OXLINT_BIN=/preset/oxlint' <<<"$out" \
+   && grep -q "OXFMT_BIN=$root/ci/oxlint-toolchain/node_modules/.bin/oxfmt" <<<"$out" \
    && grep -q '1 suite(s) ran, 0 failed' <<<"$out"; then
-  ok "partial preset installs the missing half and gates green"
+  ok "partial preset keeps the set var, resolves the missing one locally"
 else
-  bad "partial preset installs the missing half" "rc=$rc out=$out"
+  bad "partial preset keeps the set var" "rc=$rc out=$out"
 fi
 
 # --- a failed install is terminal, not a silent fallthrough ---
