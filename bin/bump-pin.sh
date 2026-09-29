@@ -17,7 +17,11 @@ CONSUMER="${1:-}"
 
 # The kit's own remote — resolved from this checkout, never a hardcoded path,
 # so the script works from any clone of quality-kit (and a test's fixture).
-KIT_REMOTE="$(git -C "$KIT" remote get-url origin)"
+# KIT_REMOTE is overridable: a caller (this script's own test) can point it at
+# a local fixture remote instead of depending on THIS checkout's own 'origin'
+# being configured, which is not guaranteed in every environment this runs in
+# (e.g. an offline validation checkout with no remote at all).
+KIT_REMOTE="${KIT_REMOTE:-$(git -C "$KIT" remote get-url origin)}"
 
 # --- latest quality-kit-v* tag, semver-highest -------------------------------
 # `git ls-remote` reads the remote directly (global-constraints: origin, never
