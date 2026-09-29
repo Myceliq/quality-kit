@@ -185,4 +185,25 @@ else
   bad "empty opt-out still refuses" "rc=$rc out=$out"
 fi
 
+# --- suites never inherit the caller's gate knobs or git context (#63) ---
+# The commit path runs this runner from INSIDE a pre-commit hook, under a factory env that
+# exports CODEX_HOOK_REQUIRE_GATE=1: every fixture hook then read REQUIRE_GATE=1 and blocked,
+# and an inherited GIT_INDEX_FILE pointed fixture repos at the outer index. The fixture suite
+# fails if any of them reaches it; QK_TEST_* is the suites' own knob family and must survive.
+root="$tmpbase/envscrub"
+mkroot "$root"
+cat > "$root/env.test.sh" <<'SUITE'
+leaked="$(env | grep -E '^(REVIEW_HOOK_|CODEX_HOOK_|QK_STAGED_FILES=|GIT_INDEX_FILE=|GIT_DIR=|GIT_WORK_TREE=)' || true)"
+[ -z "$leaked" ] || { echo "leaked: $leaked"; exit 1; }
+[ "${QK_TEST_UTF8_LOCALE:-}" = "C.UTF-8" ] || { echo "QK_TEST_ knob was stripped"; exit 1; }
+SUITE
+rc=0; out="$(cd "$root" && CODEX_HOOK_REQUIRE_GATE=1 REVIEW_HOOK_REQUIRE_GATE=1 \
+  QK_STAGED_FILES=/nonexistent GIT_INDEX_FILE=/nonexistent/index GIT_DIR=/nonexistent/.git \
+  GIT_WORK_TREE=/nonexistent QK_TEST_UTF8_LOCALE=C.UTF-8 bash bin/selftest.sh 2>&1)" || rc=$?
+if [ "$rc" -eq 0 ] && grep -q '1 suite(s) ran, 0 failed' <<<"$out"; then
+  ok "suites never inherit the caller's gate knobs or git context"
+else
+  bad "suites never inherit the caller's gate knobs or git context" "rc=$rc out=$out"
+fi
+
 [ "$fail" -eq 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
