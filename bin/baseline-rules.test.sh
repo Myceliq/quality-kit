@@ -65,4 +65,20 @@ rc=0; out="$(bash "$BR" "$E" 2>/dev/null)" || rc=$?
 err="$(bash "$BR" "$E" 2>&1 >/dev/null)" || true  # exit 3 is expected here; only grepping its stderr
 echo "$err" | grep -q "baseline-rules.sh" && ok "missing toolchain names the follow-up command" || bad "missing toolchain names the follow-up command" "no guidance on stderr"
 
+# --- dirty-tree warning: stderr only, and only when the tree IS dirty ---
+# Callers parse stdout as JSON, so the warning must never land there; and a
+# warning on a clean tree would train operators to ignore the real one.
+D="$(mktemp -d)"; DERR="$(mktemp)"
+(cd "$D" && git init -q && git config core.hooksPath /dev/null \
+  && printf '{"version":"0.2.0","profile":"nextjs","runner":"npm","pendingFlags":[],"ruleOverrides":{"burnDown":{},"permanent":{}},"ignoreOverrides":[]}\n' > .quality-kit.json \
+  && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+touch "$D/scratch.txt"
+rc=0; out="$(bash "$BR" "$D" 2>"$DERR")" || rc=$?
+[ "$rc" = 3 ] && [ "$out" = "{}" ] && grep -q "WARNING — working tree is dirty" "$DERR" \
+  && ok "dirty repo warns on stderr only" || bad "dirty repo warns on stderr only" "rc=$rc out=$out err=$(cat "$DERR")"
+rm "$D/scratch.txt"
+rc=0; out="$(bash "$BR" "$D" 2>"$DERR")" || rc=$?
+[ "$rc" = 3 ] && [ "$out" = "{}" ] && ! grep -q "working tree is dirty" "$DERR" \
+  && ok "clean repo does not warn" || bad "clean repo does not warn" "rc=$rc out=$out err=$(cat "$DERR")"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

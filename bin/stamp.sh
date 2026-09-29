@@ -429,27 +429,67 @@ import json,sys
 d=json.load(open(sys.argv[1]))
 print('1' if not (d.get('ruleOverrides') or {}).get('burnDown') else '0')" "$REPO/.quality-kit.json")"
 if [ "$FIRST_BURNDOWN" = 1 ]; then
+  # seed_burn <ledger> [<recount>]: write the ledger. Given the recount, record
+  # the recount's numbers for the ledger's rules instead, and name every rule
+  # the recount measures at zero as it is dropped.
+  seed_burn() { python3 - "$REPO/.quality-kit.json" "$@" <<'PY'
+import json, sys
+path, burn = sys.argv[1], json.loads(sys.argv[2])
+if len(sys.argv) > 3:
+    recount = json.loads(sys.argv[3])
+    kept = {r: recount[r] for r in sorted(burn) if recount.get(r, 0) > 0}
+    for r in sorted(set(burn) - set(kept)):
+        print(f"→ dropped {r} from the burn-down seed — the ratchet's recount measures it at 0 "
+              f"(the discovery pass saw {burn[r]}); recording it would fail check-drift.sh --ratchet on day one")
+    burn = kept
+d = json.load(open(path))
+d["ruleOverrides"]["burnDown"] = burn
+open(path, "w").write(json.dumps(d, indent=2) + "\n")
+if len(sys.argv) > 3:
+    print(f"→ seeded ruleOverrides.burnDown with {len(burn)} rules from a lint run" if burn
+          else "→ no burn-down needed — the ratchet's recount measured zero for every discovered rule")
+PY
+  }
   # ponytail: baseline-rules.sh echoes its own "{}" to stdout before a non-zero
   # exit (missing/crashed linter); `cmd || echo` would append a second "{}"
   # onto that captured output instead of replacing it. Assign-then-fallback
   # keeps the failure path a clean "{}" instead of corrupt concatenated JSON.
   # The rc is captured separately so the toolchain-present-but-zero-violations
   # case (exit 0, "{}") isn't misreported as "toolchain absent".
+  # stderr is NOT discarded: only stdout is captured, so baseline-rules.sh's
+  # diagnostics (the dirty-tree warning, the linter's own failure text) reach
+  # the operator without touching the JSON compared here.
   BR_RC=0
-  BURN="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" 2>/dev/null)" || BR_RC=$?
+  BURN="$(bash "$KIT/bin/baseline-rules.sh" "$REPO")" || BR_RC=$?
   if [ "$BURN" != "{}" ]; then
-    python3 - "$REPO/.quality-kit.json" "$BURN" <<'PY'
-import json, sys
-path, burn = sys.argv[1], json.loads(sys.argv[2])
-d = json.load(open(path))
-d["ruleOverrides"]["burnDown"] = burn
-open(path, "w").write(json.dumps(d, indent=2) + "\n")
-PY
-    echo "→ seeded ruleOverrides.burnDown with $(python3 -c "import json,sys;print(len(json.loads(sys.argv[1])))" "$BURN") rules from a lint run"
+    # Two passes. The one above only DISCOVERS the rule set: it lints the repo
+    # before any burn-down rule is demoted, while check-drift.sh --ratchet counts
+    # with the ledger in place (TS: those rules at warn, so warning-exempt scopes
+    # drop out; python: re-selected over the rendered ruff.toml). Record the
+    # discovery counts and every disagreement is red on day one — "complete" for
+    # a rule the ratchet cannot reach, "regressed" for one it counts higher. So
+    # write the set, then recount it through the ratchet's own invocation and
+    # record THAT. ruff.toml is rendered for the recount because the ratchet
+    # always counts over it; the final render below still runs after the ledger
+    # settles, so the ordering contract there holds.
+    seed_burn "$BURN"
+    if [ "$PROFILE" = python ]; then bash "$KIT/bin/render-ruff.sh" "$REPO" > "$REPO/ruff.toml"; fi
+    SEL="$(python3 -c "
+import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
+    RECOUNT_RC=0
+    RECOUNT="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL")" || RECOUNT_RC=$?
+    if [ "$RECOUNT_RC" = 0 ]; then
+      seed_burn "$BURN" "$RECOUNT"
+    else
+      # the discovery numbers are exactly what this recount exists to replace —
+      # leaving them behind would seed the ledger the ratchet then rejects
+      seed_burn "{}"
+      echo "→ burn-down recount failed (baseline-rules.sh exit $RECOUNT_RC) — not seeding from the discovery pass alone; fix the linter, then re-stamp to seed: quality-kit/bin/stamp.sh $REPO --profile $PROFILE"
+    fi
   elif [ "$BR_RC" = 0 ]; then
     echo "→ no burn-down needed — the linter reported zero violations"
   else
-    echo "→ toolchain not ready (baseline-rules.sh exit $BR_RC) — after install, seed the burn-down: quality-kit/bin/baseline-rules.sh $REPO"
+    echo "→ toolchain not ready (baseline-rules.sh exit $BR_RC) — after install, seed the burn-down: quality-kit/bin/stamp.sh $REPO --profile $PROFILE"
   fi
 fi
 

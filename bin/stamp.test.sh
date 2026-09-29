@@ -180,6 +180,9 @@ d=json.load(open('$N/.quality-kit.json'))
 assert d['ruleOverrides']['burnDown']=={}, d
 " && ok "first stamp without toolchain leaves burnDown empty" || bad "first stamp without toolchain leaves burnDown empty" "assertion failed"
 echo "$out" | grep -q "baseline-rules.sh" && ok "stamp names the baseline follow-up" || bad "stamp names the baseline follow-up" "$out"
+# stamp dirties the tree by design before it seeds, so baseline-rules.sh warns —
+# and that warning is the operator's only hint the counts may not match CI
+echo "$out" | grep -q "working tree is dirty" && ok "stamp surfaces baseline-rules.sh's dirty-tree warning" || bad "stamp surfaces baseline-rules.sh's dirty-tree warning" "$out"
 
 # a re-stamp must NOT regenerate or reset an existing burn-down
 python3 -c "
@@ -191,6 +194,78 @@ import json
 d=json.load(open('$N/.quality-kit.json'))
 assert d['ruleOverrides']['burnDown']=={'func-style':7}, d
 " && ok "re-stamp does not regenerate the burn-down" || bad "re-stamp does not regenerate the burn-down" "assertion failed"
+
+# --- the seed records what the ratchet will measure, not the discovery pass (#41) ---
+# The discovery pass lints the repo before any burn-down rule is demoted to warn;
+# the ratchet counts it with the ledger in place. Where the two disagree, a
+# single-pass seed is red on day one. The stub oxlint makes that disagreement
+# deterministic: it reports one set while burnDown is {} and another once seeded.
+KITROOT="$(cd "$DIR/.." && pwd)"
+stub_repo() { # stub_repo <rules while burnDown is {}> <rules once seeded> — each a
+              # space-separated list of eslint rules (one per diagnostic), or `crash`
+  local r; r="$(mktemp -d)"
+  # shaped like fresh() in check-drift.test.sh, so the drift gate is clean on it
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null \
+    && printf '{"name":"fix","dependencies":{"next":"^16.3.1"},"scripts":{"build":"true"}}' > package.json \
+    && printf '{"lockfileVersion":3,"packages":{"node_modules/next":{"version":"16.3.1"}}}' > package-lock.json \
+    && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
+    && printf '{}' > tsconfig.json && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m init)
+  mkdir -p "$r/node_modules/.bin"
+  cat > "$r/node_modules/.bin/oxlint" <<EOF
+#!/usr/bin/env bash
+seeded="\$(python3 -c "import json,sys;print(bool(json.load(open(sys.argv[1]))['ruleOverrides']['burnDown']))" "\$(dirname "\$0")/../../.quality-kit.json")"
+[ "\$seeded" = True ] && emit='$2' || emit='$1'
+[ "\$emit" = crash ] && { echo crash; exit 1; }
+python3 -c "import json,sys;print(json.dumps({'diagnostics':[{'code':'eslint(%s)' % r} for r in sys.argv[1:]]}))" \$emit
+EOF
+  chmod +x "$r/node_modules/.bin/oxlint"
+  echo "$r"
+}
+burn_is() { python3 -c "
+import json,sys
+got=json.load(open(sys.argv[1]))['ruleOverrides']['burnDown']
+sys.exit(0 if got==json.loads(sys.argv[2]) else 1)" "$1/.quality-kit.json" "$2"; }
+ratchet() { KIT_DIR="$KITROOT" bash "$DIR/check-drift.sh" "$1" --ratchet 2>&1; }
+
+T="$(stub_repo "func-style func-style no-console no-console no-console" "func-style func-style func-style func-style")"
+rc=0; out="$(bash "$S" "$T" --profile nextjs 2>&1)" || rc=$?
+[ "$rc" = 0 ] && burn_is "$T" '{"func-style": 4}' \
+  && ok "seed records the ratchet's recount, not the discovery pass" \
+  || bad "seed records the ratchet's recount, not the discovery pass" "rc=$rc burnDown=$(cat "$T/.quality-kit.json") out=$out"
+echo "$out" | grep "no-console" | grep -q "dropped" \
+  && ok "a rule the recount measures at zero is dropped by name" || bad "a rule the recount measures at zero is dropped by name" "$out"
+echo "$out" | grep -qF "seeded ruleOverrides.burnDown with 1 rules" \
+  && ok "the seed summary counts the recorded rules" || bad "the seed summary counts the recorded rules" "$out"
+rc=0; dout="$(ratchet "$T")" || rc=$?
+[ "$rc" = 0 ] && ! echo "$dout" | grep -qE "burn-down (complete|regressed)" \
+  && ok "a freshly seeded ledger is ratchet-clean on day one" || bad "a freshly seeded ledger is ratchet-clean on day one" "rc=$rc $dout"
+
+# negative control: the single-pass numbers under the SAME fixture go red both ways
+python3 -c "
+import json,sys; p=sys.argv[1]; d=json.load(open(p))
+d['ruleOverrides']['burnDown']={'func-style':2,'no-console':3}; json.dump(d,open(p,'w'))" "$T/.quality-kit.json"
+rc=0; dout="$(ratchet "$T")" || rc=$?
+[ "$rc" != 0 ] && echo "$dout" | grep -qF "burn-down complete for no-console" \
+  && echo "$dout" | grep -qF "burn-down regressed: func-style 4 > recorded 2" \
+  && ok "the single-pass ledger is red under the same fixture" || bad "the single-pass ledger is red under the same fixture" "rc=$rc $dout"
+
+T="$(stub_repo "no-console no-console no-console" "")"
+rc=0; out="$(bash "$S" "$T" --profile nextjs 2>&1)" || rc=$?
+[ "$rc" = 0 ] && burn_is "$T" '{}' \
+  && ok "a seed whose every rule recounts to zero leaves an empty ledger" \
+  || bad "a seed whose every rule recounts to zero leaves an empty ledger" "rc=$rc burnDown=$(cat "$T/.quality-kit.json") out=$out"
+echo "$out" | grep "no-console" | grep -q "dropped" \
+  && ok "the all-zero seed names the dropped rule" || bad "the all-zero seed names the dropped rule" "$out"
+ratchet "$T" >/dev/null && ok "the all-zero seed is ratchet-clean" || bad "the all-zero seed is ratchet-clean" "$(ratchet "$T" || true)"
+
+# a crashed recount must not leave the discovery pass's numbers behind as the ledger
+T="$(stub_repo "func-style func-style" crash)"
+rc=0; out="$(bash "$S" "$T" --profile nextjs 2>&1)" || rc=$?
+[ "$rc" = 0 ] && burn_is "$T" '{}' \
+  && ok "a failed recount leaves no first-pass numbers behind" \
+  || bad "a failed recount leaves no first-pass numbers behind" "rc=$rc burnDown=$(cat "$T/.quality-kit.json") out=$out"
+echo "$out" | grep -q "baseline-rules.sh" && echo "$out" | grep -q "did not produce a valid" \
+  && ok "a failed recount surfaces the linter's own diagnostic" || bad "a failed recount surfaces the linter's own diagnostic" "$out"
 
 # ORDERING REGRESSION: on a python first stamp the burn-down is seeded and THEN
 # ruff.toml is rendered. Reverse the two and the rendered file omits every rule
@@ -207,6 +282,7 @@ import json
 d=json.load(open('$Y/.quality-kit.json'))
 burn=d['ruleOverrides']['burnDown']
 assert burn, 'first stamp should have seeded a burn-down from the real violations'
+assert all(type(v) is int and v > 0 for v in burn.values()), f'seed recorded a non-positive count: {burn}'
 toml=open('$Y/ruff.toml').read()
 for rule in burn:
     assert rule in toml, (f'seeded rule {rule} missing from rendered ruff.toml — '
@@ -215,6 +291,8 @@ for rule in burn:
   # and the freshly stamped python repo must be drift-clean
   KIT_DIR="$(cd "$(dirname "$S")/.." && pwd)" bash "$(dirname "$S")/check-drift.sh" "$Y" >/dev/null 2>&1 \
     && ok "python first stamp is drift-clean" || bad "python first stamp is drift-clean" "drift gate rejected a fresh stamp"
+  ratchet "$Y" >/dev/null \
+    && ok "python first stamp is ratchet-clean on day one" || bad "python first stamp is ratchet-clean on day one" "$(ratchet "$Y" || true)"
 else
   echo "SKIP python first-stamp ordering (no ruff/uvx available)"
 fi

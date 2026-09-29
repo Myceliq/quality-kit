@@ -422,11 +422,14 @@ stamp PR — most of them BLOCK a green stamp.
 - **First stamp needs the toolchain installed to seed the burn-down.** Generation
   runs the repo's real linter. Stamping before `npm ci` (or without ruff on PATH)
   leaves `ruleOverrides.burnDown` empty and prints the follow-up command — the
-  stamp still succeeds, but CI will be red until you run
-  `quality-kit/bin/baseline-rules.sh <repo>` and commit the result. On the python
-  profile, re-run `bin/stamp.sh` afterwards rather than editing `ruff.toml`: that
-  file is rendered from the burn-down, and the drift gate compares it against a
-  fresh render.
+  stamp still succeeds, but CI will be red until you re-run
+  `quality-kit/bin/stamp.sh <repo> --profile <profile>` and commit the result.
+  Do not run `baseline-rules.sh` by hand and copy its numbers in: that single
+  pass records discovery counts, not the recount `check-drift.sh --ratchet`
+  measures, so it seeds a ledger the ratchet rejects on day one. Re-stamping
+  re-seeds because the burn-down is empty until then. Do not edit `ruff.toml`
+  directly either: that file is rendered from the burn-down, and the drift gate
+  compares it against a fresh render.
 - **The first `.quality-kit.json` diff is large, and that is correct.** A mature
   repo seeds one burn-down entry per failing rule (mentzer: ~85 rules / ~2.5k
   violations). Reviewers should read it as an inventory of accepted debt, not as
