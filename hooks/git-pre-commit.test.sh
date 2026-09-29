@@ -3,6 +3,12 @@
 # Where: quality-kit/hooks. Why: pre-commit is the universal delegate gate —
 # it must fire for stamped repos and stay a no-op for everything else.
 set -euo pipefail
+# Every hook knob is cleared for the WHOLE suite, the same reasoning check-drift.test.sh records
+# for FACTORY_GATE. This suite runs inside validate:fast, which the pre-commit hook itself invokes —
+# and a factory commit path exports REVIEW_HOOK_REQUIRE_GATE=1. Inherited, it turns every
+# fail-open-default case below into a refusal. The cases that WANT a knob pass it on their own
+# command line, so clearing them here cannot mask what they measure.
+while IFS= read -r knob; do unset "$knob"; done < <(compgen -v | grep -E '^(REVIEW|CODEX)_HOOK_' || true)
 DIR="$(cd "$(dirname "$0")" && pwd)"
 HOOK="$DIR/git-pre-commit"
 fail=0

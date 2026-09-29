@@ -8,6 +8,11 @@
 #       the preflight removed from the hook, because a test that still passes
 #       with the feature deleted has asserted nothing.
 set -euo pipefail
+# Every hook knob is cleared for the WHOLE suite, as in hooks/git-pre-commit.test.sh: this suite
+# runs inside validate:fast under a commit path that may export REVIEW_HOOK_REQUIRE_GATE=1, which
+# would turn the fail-open-default cases below into refusals. Cases that want a knob pass it on
+# their own command line.
+while IFS= read -r knob; do unset "$knob"; done < <(compgen -v | grep -E '^(REVIEW|CODEX)_HOOK_' || true)
 DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT="$DIR/staged-integrity.sh"
 HOOK="$DIR/../hooks/git-pre-commit"

@@ -1298,8 +1298,11 @@ import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
       # both cases. A crash must not be read as "{}" == "all burn-down
       # complete" — that would tell an automated repair-loop to delete the
       # entire ledger over a transient linter crash.
+      # stderr is NOT discarded: only stdout is captured, so baseline-rules.sh's
+      # dirty-tree warning and the linter's own failure text land in the drift
+      # report beside the DRIFT line they explain, without touching ACTUAL.
       BR_RC=0
-      ACTUAL="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL" 2>/dev/null)" || BR_RC=$?
+      ACTUAL="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL")" || BR_RC=$?
       if [ "$BR_RC" != 0 ]; then
         err "ratchet: the linter failed to run (baseline-rules.sh exit $BR_RC) — fix the linter/config and re-run; a crashed lint run must not be read as 'all burn-down complete'"
       else

@@ -32,9 +32,14 @@ fresh() { # stamped nextjs fixture repo (carries a "next" dependency so the
     && printf '{"lockfileVersion":3,"packages":{"node_modules/next":{"version":"%s"}}}' "$nv" > package-lock.json \
     && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
     && printf '{}' > tsconfig.json && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
-  bash "$DIR/stamp.sh" "$r" --profile nextjs >/dev/null
+  stamp_quiet "$r"
   echo "$r"
 }
+# stamp surfaces baseline-rules.sh's stderr (the dirty-tree warning fires on
+# every fixture here), so fixture setup keeps stamp's output and shows it only
+# when the stamp itself fails
+stamp_quiet() { local log; log="$(mktemp)"
+  bash "$DIR/stamp.sh" "$1" --profile nextjs >"$log" 2>&1 || cat "$log" >&2; }
 run() { KIT_DIR="$KITROOT" bash "$CD" "$1" 2>&1; }
 
 R="$(fresh)"
@@ -269,7 +274,7 @@ fresh_pnpm() { # like fresh(), on pnpm. $1 = locked next version, $2 = lockfileV
     && pnpm_lock "$nv" "$lv" > pnpm-lock.yaml \
     && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
     && printf '{}' > tsconfig.json && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
-  bash "$DIR/stamp.sh" "$r" --profile nextjs >/dev/null
+  stamp_quiet "$r"
   echo "$r"
 }
 
@@ -1251,6 +1256,36 @@ run "$R" >/dev/null && ok "default mode ignores burn-down counts" || bad "defaul
 # unknown flag is a usage error, not a silent pass
 rc=0; KIT_DIR="$KITROOT" bash "$CD" "$R" --bogus >/dev/null 2>&1 || rc=$?
 [ "$rc" = 64 ] && ok "unknown flag is a usage error" || bad "unknown flag is a usage error" "rc=$rc"
+
+# --- baseline-rules.sh's stderr reaches the ratchet's output (#41) ---
+# A stub oxlint that ignores its arguments stands in for the repo's linter, so the
+# counts are deterministic and no toolchain is needed.
+stub_oxlint() { # stub_oxlint <repo> <eslint rules, one per diagnostic | crash>
+  mkdir -p "$1/node_modules/.bin"
+  cat > "$1/node_modules/.bin/oxlint" <<EOF
+#!/usr/bin/env bash
+emit='$2'
+[ "\$emit" = crash ] && { echo crash; exit 1; }
+python3 -c "import json,sys;print(json.dumps({'diagnostics':[{'code':'eslint(%s)' % r} for r in sys.argv[1:]]}))" \$emit
+EOF
+  chmod +x "$1/node_modules/.bin/oxlint"
+}
+W="$(fresh)"; stub_oxlint "$W" "func-style func-style"
+qk_mut "$W" "d['ruleOverrides']['burnDown']={'func-style':2}"
+(cd "$W" && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m stamped)
+rc=0; out="$(ratchet "$W")" || rc=$?
+[ "$rc" = 0 ] && ! echo "$out" | grep -q "working tree is dirty" \
+  && ok "a clean tree gives the ratchet no dirty-tree warning" || bad "a clean tree gives the ratchet no dirty-tree warning" "rc=$rc $out"
+touch "$W/scratch.txt"
+rc=0; out="$(ratchet "$W")" || rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "working tree is dirty" \
+  && ok "the ratchet surfaces the dirty-tree warning without failing on it" || bad "the ratchet surfaces the dirty-tree warning without failing on it" "rc=$rc $out"
+
+W="$(fresh)"; stub_oxlint "$W" crash
+qk_mut "$W" "d['ruleOverrides']['burnDown']={'func-style':2}"
+rc=0; out="$(ratchet "$W")" || rc=$?
+[ "$rc" != 0 ] && echo "$out" | grep -q "linter failed to run" && echo "$out" | grep -q "did not produce a valid" \
+  && ok "the ratchet surfaces the linter's own failure diagnostic" || bad "the ratchet surfaces the linter's own failure diagnostic" "rc=$rc $out"
 
 # python ratchet against real ruff: 3 unused imports recorded as 2 must fail
 if command -v uvx >/dev/null 2>&1; then
