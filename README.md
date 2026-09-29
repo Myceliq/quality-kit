@@ -23,6 +23,10 @@ under `ts/` and `py/`, it is **not** stamped into repos — it is installed once
 per machine as the global hook (`git config --global core.hooksPath`), so
 changing it here does not move any repo's pinned version.
 
+The kit requires **Bash 4.4+** (`mapfile -d`, `declare -A`); scripts that need
+it refuse with an actionable message on an older Bash rather than a raw
+syntax error — macOS ships 3.2 as `/bin/bash`, so `brew install bash` first.
+
 Its verdict parsing lives in `codex_verdict()`, deliberately split out and
 reachable via `REVIEW_HOOK_LIB_ONLY=1` so it can be tested directly. **Findings
 are matched before any approval signal**, and every case in
