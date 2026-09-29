@@ -33,11 +33,17 @@ echo "STAMP_ARGV: $0 $*" >> "$STUB_LOG"
 echo "stamped profile=$3" > "$1/.stamp-marker"
 STAMP
 chmod +x "$KIT_FIXTURE/bin/stamp.sh"
+# bump-pin.sh runs from inside the fixture, so its `$KIT` is a real git repo
+# with an origin — whatever state this checkout's own .git is in (a worktree's
+# .git points at admin state outside the worktree, which may not be present).
+cp "$BP" "$KIT_FIXTURE/bin/bump-pin.sh"
 (cd "$KIT_FIXTURE" && "$REAL_GIT" init -q -b main \
   && "$REAL_GIT" config core.hooksPath /dev/null \
   && "$REAL_GIT" add -A \
   && "$REAL_GIT" -c user.name=t -c user.email=t@t commit -q -m init \
   && "$REAL_GIT" tag quality-kit-v9.9.9)
+"$REAL_GIT" -C "$KIT_FIXTURE" remote add origin "$KIT_FIXTURE"
+BP="$KIT_FIXTURE/bin/bump-pin.sh"
 
 # --- fixture: a plain repo `gh repo clone` clones from (fresh bare per case) -
 CONSUMER_SRC="$WORKROOT/consumer-src"
@@ -127,7 +133,6 @@ run_case() { # pin_version pin_profile open_prs branch_exists
   CASE_OUT="$(env PATH="$STUBBIN:$PATH" \
     STUB_LOG="$CASE_LOG" KIT_SRC_DIR="$KIT_FIXTURE" CONSUMER_SRC_BARE="$CASE_CONSUMER_BARE" \
     PIN_B64="$pin_b64" OPEN_PRS="$open_prs" BRANCH_EXISTS="$branch_exists" \
-    KIT_REMOTE="$KIT_FIXTURE" \
     bash "$BP" example/consumer 2>&1)" || CASE_RC=$?
 }
 
