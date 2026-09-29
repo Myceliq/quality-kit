@@ -2,10 +2,11 @@
   "name": "quality-kit-oxlint-toolchain",
   "version": "0.0.0",
   "private": true,
-  "description": "Pinned oxlint+ultracite+oxfmt toolchain for quality-kit CI's config integration tests (quality-kit/ts/oxlint-overrides.test.sh, quality-kit/ts/oxfmt-clean.test.sh). Regenerate the lockfile when quality-kit/ts/pins.json bumps oxlint/ultracite/oxfmt.",
+  "description": "Pinned oxlint+ultracite+oxfmt+vitest toolchain for quality-kit CI (the config integration tests, and real vitest for kit suites, #69). Every version must equal quality-kit/ts/pins.json — ci/toolchain-pins.test.sh fails otherwise; regenerate the lockfile with npm install here when pins.json moves.",
   "dependencies": {
+    "oxfmt": "0.59.0",
     "oxlint": "1.74.0",
     "ultracite": "7.9.4",
-    "oxfmt": "0.59.0"
+    "vitest": "4.1.10"
   }
 }

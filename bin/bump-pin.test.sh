@@ -11,6 +11,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BP="$DIR/bump-pin.sh"
+KITROOT="$(cd "$DIR/.." && pwd)"
 REAL_GIT="$(command -v git)"
 fail=0
 ok()  { echo "PASS $1"; }
@@ -63,6 +64,17 @@ mkdir -p "$STUBBIN"
 cat > "$STUBBIN/git" <<EOF
 #!/usr/bin/env bash
 REAL_GIT="$REAL_GIT"
+# bump-pin.sh's very first git call resolves ITS OWN checkout's origin remote
+# ("\$KIT" inside bump-pin.sh, always this test's real repo root) to build the
+# clone URL used later. That checkout is not guaranteed to carry a real origin
+# remote (e.g. under a validation sandbox that snapshots content without the
+# linked worktree's git metadata), so it is stubbed here rather than left to
+# fall through to the real git, which would make this suite's outcome depend
+# on ambient repo state it does not control.
+if [ "\$1" = "-C" ] && [ "\$2" = "$KITROOT" ] && [ "\$3" = "remote" ] && [ "\$4" = "get-url" ] && [ "\$5" = "origin" ]; then
+  echo "https://example.invalid/quality-kit.git"
+  exit 0
+fi
 case "\$1" in
   ls-remote)
     printf '1111111111111111111111111111111111111111\trefs/tags/quality-kit-v9.9.8\n'
@@ -130,8 +142,16 @@ run_case() { # pin_version pin_profile open_prs branch_exists
   local pin_b64
   pin_b64="$(printf '{"version":"%s","profile":"%s"}' "$pin_version" "$pin_profile" | base64)"
   CASE_RC=0
+  # KIT_REMOTE is set explicitly here rather than left to bump-pin.sh's own
+  # fallback (`git -C "$KIT" remote get-url origin`): that fallback reads
+  # THIS checkout's own 'origin', which this suite must not depend on — it
+  # is not guaranteed to be configured in every environment these tests run
+  # in (e.g. an offline validation checkout with no remote at all). The
+  # value itself is inert: ls-remote and clone are both PATH-stubbed above
+  # and ignore it, materializing tags/content from KIT_SRC_DIR instead.
   CASE_OUT="$(env PATH="$STUBBIN:$PATH" \
     STUB_LOG="$CASE_LOG" KIT_SRC_DIR="$KIT_FIXTURE" CONSUMER_SRC_BARE="$CASE_CONSUMER_BARE" \
+    KIT_REMOTE="$KIT_FIXTURE" \
     PIN_B64="$pin_b64" OPEN_PRS="$open_prs" BRANCH_EXISTS="$branch_exists" \
     bash "$BP" example/consumer 2>&1)" || CASE_RC=$?
 }

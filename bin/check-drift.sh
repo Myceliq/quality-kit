@@ -4,10 +4,11 @@
 # Why:  local edits stay free; merge is where weakening gets caught. Every
 #       failure names its remedy so a repair-loop agent can self-correct.
 set -euo pipefail
-RATCHET=0 TARGET="."
+RATCHET=0 QUARANTINE=0 TARGET="."
 while [ $# -gt 0 ]; do case "$1" in
-  --ratchet) RATCHET=1; shift ;;
-  -*)        echo "unknown flag $1 (usage: check-drift.sh <repo> [--ratchet])" >&2; exit 64 ;;
+  --ratchet)    RATCHET=1; shift ;;
+  --quarantine) QUARANTINE=1; shift ;;
+  -*)           echo "unknown flag $1 (usage: check-drift.sh <repo> [--ratchet] [--quarantine])" >&2; exit 64 ;;
   *)         TARGET="$1"; shift ;;
 esac; done
 REPO="$(cd "$TARGET" && pwd)"
@@ -1248,6 +1249,16 @@ except Exception as e:
 sys.exit(rc)
 PY
 
+# testQuarantine: the static pass checks the block's shape; --quarantine runs the
+# declared test command instead, which re-checks the shape first and refuses a
+# malformed block without running it. One call either way, so a shape error is
+# reported once. Lives in its own script, like the ratchet's baseline-rules.sh.
+if [ "$QUARANTINE" = 1 ]; then
+  bash "$KIT/bin/check-quarantine.sh" "$REPO" --run || fail=1
+else
+  bash "$KIT/bin/check-quarantine.sh" "$REPO" --static || fail=1
+fi
+
 if [ "$RATCHET" = 1 ]; then
   # The counting pass. Needs the repo's linter, so quality.yml runs it after
   # Install while the static gate above runs before it (cheap-first).
@@ -1287,8 +1298,11 @@ import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
       # both cases. A crash must not be read as "{}" == "all burn-down
       # complete" — that would tell an automated repair-loop to delete the
       # entire ledger over a transient linter crash.
+      # stderr is NOT discarded: only stdout is captured, so baseline-rules.sh's
+      # dirty-tree warning and the linter's own failure text land in the drift
+      # report beside the DRIFT line they explain, without touching ACTUAL.
       BR_RC=0
-      ACTUAL="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL" 2>/dev/null)" || BR_RC=$?
+      ACTUAL="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL")" || BR_RC=$?
       if [ "$BR_RC" != 0 ]; then
         err "ratchet: the linter failed to run (baseline-rules.sh exit $BR_RC) — fix the linter/config and re-run; a crashed lint run must not be read as 'all burn-down complete'"
       else

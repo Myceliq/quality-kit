@@ -230,6 +230,20 @@ edited on a branch inside a worktree does not take effect there.
   default-everything sweep — sweeping the whole tree would silently count
   vendored/generated code. Not wired into stamped CI in v1; run it as an
   explicit CI step or locally.
+- `testQuarantine` — optional, never generated:
+  `{"command": "<shell>", "entries": [{"test": "<classname>::<name>", "expires": "YYYY-MM-DD", "reason": "..."}]}`.
+  The static drift pass enforces the shape: a non-empty `command`, a real
+  calendar date for every `expires`, a non-empty `reason`, one entry per test.
+  `check-drift.sh <repo> --quarantine` runs `command` through bash from the repo
+  root with `QUALITY_KIT_JUNIT` set to a fresh path, and reads the JUnit XML it
+  writes there (`<failure>`/`<error>` = failing, `<skipped>` = skipped). A
+  failing test with a live entry reports `quarantined-skip` — neither a pass
+  nor a failure. It refuses: a failing test with no live entry; an entry whose
+  `expires` is before today (UTC); a stale entry whose test passed, was
+  skipped, or is absent from the report; and a run it cannot read (no report,
+  unparseable XML, zero testcases, or a non-zero exit with no failing
+  testcase). A malformed block is refused without running `command`. Not wired
+  into stamped CI; run it as an explicit CI step.
 
 Rule ids use **config form**, not diagnostic form: core eslint rules are bare
 (`func-style`), everything else is `plugin/rule` (`unicorn/filename-case`).
@@ -408,11 +422,14 @@ stamp PR — most of them BLOCK a green stamp.
 - **First stamp needs the toolchain installed to seed the burn-down.** Generation
   runs the repo's real linter. Stamping before `npm ci` (or without ruff on PATH)
   leaves `ruleOverrides.burnDown` empty and prints the follow-up command — the
-  stamp still succeeds, but CI will be red until you run
-  `quality-kit/bin/baseline-rules.sh <repo>` and commit the result. On the python
-  profile, re-run `bin/stamp.sh` afterwards rather than editing `ruff.toml`: that
-  file is rendered from the burn-down, and the drift gate compares it against a
-  fresh render.
+  stamp still succeeds, but CI will be red until you re-run
+  `quality-kit/bin/stamp.sh <repo> --profile <profile>` and commit the result.
+  Do not run `baseline-rules.sh` by hand and copy its numbers in: that single
+  pass records discovery counts, not the recount `check-drift.sh --ratchet`
+  measures, so it seeds a ledger the ratchet rejects on day one. Re-stamping
+  re-seeds because the burn-down is empty until then. Do not edit `ruff.toml`
+  directly either: that file is rendered from the burn-down, and the drift gate
+  compares it against a fresh render.
 - **The first `.quality-kit.json` diff is large, and that is correct.** A mature
   repo seeds one burn-down entry per failing rule (mentzer: ~85 rules / ~2.5k
   violations). Reviewers should read it as an inventory of accepted debt, not as
