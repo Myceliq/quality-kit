@@ -27,9 +27,10 @@
 # must never trigger `npm ci`, or validation fails offline to install a bin
 # nobody will use.
 # #72: vitest (installed into the same toolchain by #69) is resolved exactly like
-# oxlint/oxfmt — a VITEST_BIN the suites read, preset-wins, paired install check —
-# so a checkout whose node_modules predates #69 (oxlint/oxfmt present, vitest
-# absent) reinstalls instead of running the vitest suites against nothing.
+# oxlint/oxfmt — preset-wins, paired install check — and exported for the
+# real-vitest cross-check suite #72 adds (no suite reads it yet), so a checkout
+# whose node_modules predates #69 (oxlint/oxfmt present, vitest absent)
+# reinstalls instead of exporting VITEST_BIN at a bin that does not exist.
 # One rule for both targets: two copies of this recipe had to be edited in
 # lockstep, and a drift between them is a gate that differs by entry point.
 TOOLCHAIN_BIN := ci/oxlint-toolchain/node_modules/.bin

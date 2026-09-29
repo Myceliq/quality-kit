@@ -156,8 +156,8 @@ else
 fi
 
 # --- VITEST_BIN alone missing refuses too (#72) ---
-# Suites running real vitest read VITEST_BIN and skip without it, so its absence
-# is the same #40 hole as a missing oxlint: refuse, naming only it.
+# VITEST_BIN is required for #72's real-vitest suite (not landed yet); its absence
+# must refuse like a missing oxlint (#40), naming only it.
 root="$tmpbase/novitest"
 mkroot "$root"
 printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"

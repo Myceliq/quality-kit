@@ -27,7 +27,8 @@ if [ -z "${KIT_SELFTEST_NO_TOOLCHAIN:-}" ]; then
   missing=()
   [ -n "${OXLINT_BIN:-}" ] || missing+=("OXLINT_BIN")
   [ -n "${OXFMT_BIN:-}" ] || missing+=("OXFMT_BIN")
-  # #72: VITEST_BIN joins the pair — a suite running real vitest skips without it, the same #40 hole.
+  # #72: VITEST_BIN joins the pair ahead of its consumer (#72's real-vitest cross-check suite,
+  # not landed yet): required now so that suite can never read as a silent skip — the #40 hole.
   [ -n "${VITEST_BIN:-}" ] || missing+=("VITEST_BIN")
   if [ "${#missing[@]}" -gt 0 ]; then
     echo "selftest: refusing — missing required toolchain: ${missing[*]} (install it exactly as .github/workflows/tests.yml does: npm ci in ci/oxlint-toolchain, then export OXLINT_BIN/OXFMT_BIN/VITEST_BIN)" >&2
