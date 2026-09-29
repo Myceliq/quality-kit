@@ -27,7 +27,7 @@ trap cleanup EXIT
 # read them — the vars only get the copied runner past its guard, the same way
 # CI's real values get the real runner past it. The missing-toolchain cases
 # strip them again with `env -u`.
-export OXLINT_BIN=/nonexistent/oxlint OXFMT_BIN=/nonexistent/oxfmt
+export OXLINT_BIN=/nonexistent/oxlint OXFMT_BIN=/nonexistent/oxfmt VITEST_BIN=/nonexistent/vitest
 # The guard's opt-out must never leak INTO a fixture from this suite's own
 # environment: under `KIT_SELFTEST_NO_TOOLCHAIN=1 make validate` (the stamped
 # consumer shape) the refusal cases below would inherit the opt-out and pass
@@ -133,9 +133,9 @@ root="$tmpbase/notoolchain"
 mkroot "$root"
 printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
 chmod +x "$root/skip.test.sh"
-rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN -u KIT_SELFTEST_NO_TOOLCHAIN bash bin/selftest.sh 2>&1)" || rc=$?
+rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN -u VITEST_BIN -u KIT_SELFTEST_NO_TOOLCHAIN bash bin/selftest.sh 2>&1)" || rc=$?
 line="$(grep 'missing required toolchain' <<<"$out" || true)"
-if [ "$rc" -ne 0 ] && grep -q 'OXLINT_BIN' <<<"$line" && grep -q 'OXFMT_BIN' <<<"$line"; then
+if [ "$rc" -ne 0 ] && grep -qF 'toolchain: OXLINT_BIN OXFMT_BIN VITEST_BIN (' <<<"$line"; then
   ok "missing toolchain refuses loudly, naming the toolchain"
 else
   bad "missing toolchain refuses loudly" "rc=$rc out=$out"
@@ -155,6 +155,20 @@ else
   bad "the refusal names exactly the missing var" "rc=$rc out=$out"
 fi
 
+# --- VITEST_BIN alone missing refuses too (#72) ---
+# Suites running real vitest read VITEST_BIN and skip without it, so its absence
+# is the same #40 hole as a missing oxlint: refuse, naming only it.
+root="$tmpbase/novitest"
+mkroot "$root"
+printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
+chmod +x "$root/skip.test.sh"
+rc=0; out="$(cd "$root" && env -u VITEST_BIN -u KIT_SELFTEST_NO_TOOLCHAIN bash bin/selftest.sh 2>&1)" || rc=$?
+if [ "$rc" -ne 0 ] && grep -qF 'toolchain: VITEST_BIN (' <<<"$out"; then
+  ok "missing VITEST_BIN alone refuses, naming it"
+else
+  bad "missing VITEST_BIN alone refuses" "rc=$rc out=$out"
+fi
+
 # --- the explicit opt-out keeps skip semantics for the stamped pre-install step ---
 # The stamped consumer `Kit self-test` step sets KIT_SELFTEST_NO_TOOLCHAIN=1: it runs
 # before install and can never have a toolchain. Opt-out is a NAMED var, never mere
@@ -164,7 +178,7 @@ root="$tmpbase/optout"
 mkroot "$root"
 printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
 chmod +x "$root/skip.test.sh"
-rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN KIT_SELFTEST_NO_TOOLCHAIN=1 bash bin/selftest.sh 2>&1)" || rc=$?
+rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN -u VITEST_BIN KIT_SELFTEST_NO_TOOLCHAIN=1 bash bin/selftest.sh 2>&1)" || rc=$?
 if [ "$rc" -eq 0 ] && grep -q '1 suite(s) ran, 0 failed' <<<"$out"; then
   ok "explicit opt-out keeps skip semantics without a toolchain"
 else
@@ -178,7 +192,7 @@ root="$tmpbase/emptyoptout"
 mkroot "$root"
 printf '%s\n' 'echo skip-ok' > "$root/skip.test.sh"
 chmod +x "$root/skip.test.sh"
-rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN KIT_SELFTEST_NO_TOOLCHAIN="" bash bin/selftest.sh 2>&1)" || rc=$?
+rc=0; out="$(cd "$root" && env -u OXLINT_BIN -u OXFMT_BIN -u VITEST_BIN KIT_SELFTEST_NO_TOOLCHAIN="" bash bin/selftest.sh 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ] && grep -q 'missing required toolchain' <<<"$out"; then
   ok "empty opt-out still refuses"
 else
