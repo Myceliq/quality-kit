@@ -514,10 +514,10 @@ out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
 # lines 1 and 4 counted; lines 2-3 are the real comment -> 2 counted lines
 echo "$out" | grep -q "^2 tracked source lines" && ok "tsx nested child text with */ counted" || bad "tsx nested child text with */ counted" "$out"
 
-# --- tsx multi-line {/* … */} JSX comment stays free ---
+# --- tsx multi-line {/* … */} JSX comment stays free (#42) ---
 # The guard the two reverted narrow fixes broke: a legitimate JSX comment must not
-# start counting. Only its interior line is free — the opener and closer lines
-# carry the container's own braces, which are code.
+# start counting. A child-position container that wraps nothing but a comment is
+# how JSX spells a comment, so its opener and closer lines are free as well.
 R="$(mkrepo)"
 cat > "$R/jsx_comment_block.tsx" <<'EOF'
 export function Comp() {
@@ -533,8 +533,87 @@ export function Comp() {
 EOF
 git -C "$R" add -A
 out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
-# 10 lines, line 5 (pure comment body) free -> 9 counted lines
-echo "$out" | grep -q "^9 tracked source lines" && ok "tsx multiline JSX comment interior free" || bad "tsx multiline JSX comment interior free" "$out"
+# 10 lines, lines 4-6 (the whole comment container) free -> 7 counted lines
+echo "$out" | grep -q "^7 tracked source lines" && ok "tsx multiline JSX comment container free" || bad "tsx multiline JSX comment container free" "$out"
+
+# --- single-line {/* … */} in JSX child position is free, .tsx and .jsx (#42) ---
+for ext in tsx jsx; do
+  R="$(mkrepo)"
+  cat > "$R/jsx_comment_inline.$ext" <<'EOF'
+export function Comp() {
+  return (
+    <div>
+      {/* one-line explanation */}
+      <span>text</span>
+    </div>
+  );
+}
+EOF
+  git -C "$R" add -A
+  rc=0; out="$(LOC_PATHS="*.$ext" bash "$LB" "$R")" || rc=$?
+  # 8 lines, line 4 free -> 7 counted lines
+  [ "$rc" = 0 ] && echo "$out" | grep -q "^7 tracked source lines" && ok "$ext single-line JSX comment container free" || bad "$ext single-line JSX comment container free" "rc=$rc out=$out"
+done
+
+# --- after a free container the parser is still reading JSX children (#42) ---
+# Line 5 is raw child text that happens to look like a comment, so it is payload;
+# line 9 is past the element and is a real comment.
+R="$(mkrepo)"
+cat > "$R/jsx_comment_resume.tsx" <<'EOF'
+export function Comp() {
+  return (
+    <div>
+      {/* one-line explanation */}
+      /* raw child text */
+    </div>
+  );
+}
+/* real comment */
+const a = 1;
+EOF
+git -C "$R" add -A
+out="$(LOC_PATHS='*.tsx' bash "$LB" "$R")"
+# 10 lines, lines 4 and 9 free -> 8 counted lines
+echo "$out" | grep -q "^8 tracked source lines" && ok "tsx JSX child mode resumes after comment container" || bad "tsx JSX child mode resumes after comment container" "$out"
+
+# --- containers with any code in or beside them stay counted (#42) ---
+# Only a comment-only payload is freed; the fixtures reuse the free cases' shapes
+# so a fix that frees by shape rather than by payload shows up here.
+T="$(mktemp -d)"
+printf '%s\n' 'export function Comp() {' '  return (' '    <div>' '      {foo && <Bar/>}' \
+  '      <span>text</span>' '    </div>' '  );' '}' > "$T/jsx_expr_and.tsx"
+printf '%s\n' 'export function Comp() {' '  return (' '    <div>' '      {items.map(renderItem)}' \
+  '      <span>text</span>' '    </div>' '  );' '}' > "$T/jsx_expr_map.tsx"
+printf '%s\n' 'export function Comp() {' '  return (' '    <div>' '      {items.map((item) =>' \
+  '          <Item key={item} />' '        )}' '      <span>text</span>' '    </div>' '  );' '}' > "$T/jsx_expr_block.tsx"
+printf '%s\n' 'export function Comp() {' '  return (' '    <div>' '      {/* explanation' \
+  '          middle line of the comment' '          continues here */ fallback}' '      <span>text</span>' \
+  '    </div>' '  );' '}' > "$T/jsx_comment_then_code.tsx"
+printf '%s\n' 'export function Comp() {' '  return (' '    <div>' '      {/* note */' '        fallback}' \
+  '      <span>text</span>' '    </div>' '  );' '}' > "$T/jsx_comment_split.tsx"
+printf '%s\n' 'export function Comp() {' '  return (' '    <div>' '      <span>a</span>{/* note */}' \
+  '      {/* note */ foo}' '    </div>' '  );' '}' > "$T/jsx_comment_mixed.tsx"
+printf '%s\n' 'function f() {' '  if (x)' '  {/* empty */}' '  return 1;' '}' > "$T/block_stmt.ts"
+cp "$T/block_stmt.ts" "$T/block_stmt.tsx"
+# fixture, then the count it must report: every line is code except the interior
+# comment line of jsx_comment_then_code; block statements are not JSX children.
+while read -r f want; do
+  R="$(mkrepo)"
+  cp "$T/$f" "$R/"
+  git -C "$R" add -A
+  out="$(LOC_PATHS="*.${f##*.}" bash "$LB" "$R" </dev/null)"
+  echo "$out" | grep -q "^$want tracked source lines" && ok "container with code counted: $f" || bad "container with code counted: $f" "$out"
+done <<'CASES'
+jsx_expr_and.tsx 8
+jsx_expr_map.tsx 8
+jsx_expr_block.tsx 10
+jsx_comment_then_code.tsx 9
+jsx_comment_split.tsx 9
+jsx_comment_mixed.tsx 8
+block_stmt.ts 5
+block_stmt.tsx 5
+CASES
+rm -r "$T"
 
 # --- tsx {foo && <Bar/>} is code ---
 # A container holding JSX is still an expression: nothing in it becomes free.

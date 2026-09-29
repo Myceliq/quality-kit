@@ -169,10 +169,14 @@ def js_lines(lines, is_jsx=False):
     counted as payload when is_jsx is True without mistaking TS generics for JSX;
     a block comment left open at EOF gives its swallowed lines back, so a
     misread opener cannot silently erase the rest of a file;
+    a JSX child-position {/* … */} is free only when the '*/' and the '}' share
+    a line with nothing but whitespace between — any other payload, or a '}'
+    on a later line than the '*/', leaves the container's braces counted;
     when the parser cannot be sure it counts the line, never skips it (the safe
     direction, never undercounts)."""
     counted = 0
     in_comment = False
+    in_comment_container = False
     swallowed = 0
     in_single_quote, in_double_quote = False, False
     template_stack = []
@@ -216,7 +220,23 @@ def js_lines(lines, is_jsx=False):
         base = template_stack[-1] - 1 if template_stack and template_stack[-1] > 0 else 0
         return len(jsx_stack) > base
 
-    for line in lines:
+    def comment_container(n, i):
+        """Whether the '{' at lines[n][i] wraps nothing but one block comment.
+        JSX has no other way to write a comment among children, so such a
+        container is a comment, not an expression. Looks ahead because the
+        opener line's cost depends on how the container ends, lines later."""
+        rest = lines[n][i + 1:].lstrip()
+        if not rest.startswith("/*"):
+            return False
+        j = len(lines[n]) - len(rest) + 2
+        while n < len(lines):
+            end = lines[n].find("*/", j)
+            if end >= 0:
+                return lines[n][end + 2:].lstrip().startswith("}")
+            n, j = n + 1, 0
+        return False
+
+    for n, line in enumerate(lines):
         in_template_payload = (len(template_stack) > 0 and template_stack[-1] == 0)
         has_code = in_template_payload or in_single_quote or in_double_quote
         i = 0
@@ -226,6 +246,13 @@ def js_lines(lines, is_jsx=False):
                     in_comment = False
                     swallowed = 0
                     i += 2
+                    if in_comment_container:
+                        # comment_container() saw only whitespace up to the '}'
+                        in_comment_container = False
+                        i = line.index("}", i) + 1
+                        prev_char = "}"
+                        last_word = ""
+                        in_word = False
                 else:
                     i += 1
             elif in_template_payload:
@@ -275,7 +302,13 @@ def js_lines(lines, is_jsx=False):
                 else:
                     i += 1
             elif is_jsx and jsx_depth > 0 and not in_jsx_tag:
-                if line[i] == "{":
+                if line[i] == "{" and comment_container(n, i):
+                    # The whole container is the comment: no frame is pushed,
+                    # so the element's child mode resumes after its '}'.
+                    in_comment = True
+                    in_comment_container = True
+                    i = line.index("/*", i) + 2
+                elif line[i] == "{":
                     has_code = True
                     push_jsx()
                     prev_char = "{"
