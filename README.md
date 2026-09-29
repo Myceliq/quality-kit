@@ -230,6 +230,20 @@ edited on a branch inside a worktree does not take effect there.
   default-everything sweep — sweeping the whole tree would silently count
   vendored/generated code. Not wired into stamped CI in v1; run it as an
   explicit CI step or locally.
+- `testQuarantine` — optional, never generated:
+  `{"command": "<shell>", "entries": [{"test": "<classname>::<name>", "expires": "YYYY-MM-DD", "reason": "..."}]}`.
+  The static drift pass enforces the shape: a non-empty `command`, a real
+  calendar date for every `expires`, a non-empty `reason`, one entry per test.
+  `check-drift.sh <repo> --quarantine` runs `command` through bash from the repo
+  root with `QUALITY_KIT_JUNIT` set to a fresh path, and reads the JUnit XML it
+  writes there (`<failure>`/`<error>` = failing, `<skipped>` = skipped). A
+  failing test with a live entry reports `quarantined-skip` — neither a pass
+  nor a failure. It refuses: a failing test with no live entry; an entry whose
+  `expires` is before today (UTC); a stale entry whose test passed, was
+  skipped, or is absent from the report; and a run it cannot read (no report,
+  unparseable XML, zero testcases, or a non-zero exit with no failing
+  testcase). A malformed block is refused without running `command`. Not wired
+  into stamped CI; run it as an explicit CI step.
 
 Rule ids use **config form**, not diagnostic form: core eslint rules are bare
 (`func-style`), everything else is `plugin/rule` (`unicorn/filename-case`).
