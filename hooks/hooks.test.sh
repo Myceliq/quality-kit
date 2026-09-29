@@ -38,19 +38,39 @@ printf '{"no":"path"}' | bash "$DIR/format-changed-adapter.sh" && ok "adapter no
 
 # --- stop-validate.sh: diff-aware turn-end gate ---
 SV="$DIR/stop-validate.sh"
-mk_repo() { # $1=fail(0|1) → fixture git repo whose validate-fast exits $1
-  local r; r="$(mktemp -d)"
-  (cd "$r" && git init -q && git config core.hooksPath /dev/null && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init)
-  printf '{"version":"0.1.0","profile":"python","runner":"make","pendingFlags":[]}' > "$r/.quality-kit.json"
-  printf 'validate-fast:\n\t@exit %s\n' "$1" > "$r/Makefile"
-  (cd "$r" && git add -A && git -c user.name=t -c user.email=t@t commit -q -m fixture)
+mk_repo() { # $1=fail(0|1) → fixture git repo whose validate-fast exits $1; any failed step → rc 1, no path
+  # Checked explicitly: callers run this inside $( ), where set -e does not reach.
+  local r; r="$(mktemp -d)" || return 1
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init) || return 1
+  printf '{"version":"0.1.0","profile":"python","runner":"make","pendingFlags":[]}' > "$r/.quality-kit.json" || return 1
+  printf 'validate-fast:\n\t@exit %s\n' "$1" > "$r/Makefile" || return 1
+  (cd "$r" && git add -A && git -c user.name=t -c user.email=t@t commit -q -m fixture) || return 1
+  [ "$(git -C "$r" rev-list --count HEAD 2>/dev/null)" = 2 ] || return 1
   echo "$r"
 }
-R=$(mk_repo 0)
+fixture() { # $1=var $2=fail(0|1) → $1 := mk_repo $2, logged; a build failure stops the suite here
+  local r
+  r=$(mk_repo "$2") || { echo "FAIL fixture repo: validate-fast exit $2 was not built"; exit 1; }
+  printf -v "$1" '%s' "$r"
+  ok "fixture repo created: validate-fast exit $2, 2 commits"
+}
+# mk_repo fails closed: a failed step yields a non-zero status and no path, so no arm below can run
+# against a half-built repo. The shim refuses every commit, as git does when it has no identity.
+mkdir -p "$T/nocommit"
+cat >"$T/nocommit/git" <<EOF
+#!/usr/bin/env bash
+for a; do [ "\$a" = commit ] && { echo "shim: commit refused" >&2; exit 1; }; done
+exec "$(command -v git)" "\$@"
+EOF
+chmod +x "$T/nocommit/git"
+set +e; out=$(PATH="$T/nocommit:$PATH" mk_repo 0 2>/dev/null); rc=$?; set -e
+[ "$rc" != 0 ] && [ -z "$out" ] && ok "mk_repo fails closed on a refused commit" \
+  || bad "mk_repo fails closed on a refused commit" "rc=$rc out=$out"
+fixture R 0
 (cd "$R" && echo '{}' | bash "$SV") && ok "clean tree allows stop" || bad "clean tree allows stop" "blocked"
 (cd "$R" && mkdir -p docs && echo x > docs/note.md && echo '{}' | bash "$SV") && ok "docs-only allows stop" || bad "docs-only allows stop" "blocked"
 (cd "$R" && echo x > code.ts && echo '{}' | bash "$SV") && ok "dirty+green allows stop" || bad "dirty+green allows stop" "blocked"
-RF=$(mk_repo 1)
+fixture RF 1
 (cd "$RF" && echo x > code.ts)
 set +e; err=$( (cd "$RF" && echo '{}' | bash "$SV") 2>&1 >/dev/null ); rc=$?; set -e
 [ "$rc" = 2 ] && echo "$err" | grep -q "validate:fast FAILED" && ok "dirty+red blocks with exit 2" || bad "dirty+red blocks with exit 2" "rc=$rc err=$err"
@@ -61,7 +81,7 @@ set +e; (cd "$RF" && printf '{"stop_hook_active": true}' | bash "$SV" 2>/dev/nul
 # The payload's cwd — not the hook's — picks the tree. A session working in one repo must not be
 # blocked by whatever happens to be dirty in the project dir the runtime launched the hook from,
 # which on a shared checkout is a peer session's in-flight work.
-RCLEAN=$(mk_repo 0)
+fixture RCLEAN 0
 (cd "$RF" && echo x > code.ts)                       # project dir: dirty AND red
 (cd "$RCLEAN" && echo x > mine.ts)                   # session's own tree: dirty and green
 (cd "$RF" && printf '{"cwd":"%s"}' "$RCLEAN" | bash "$SV") \
