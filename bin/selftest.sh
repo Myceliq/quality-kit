@@ -36,6 +36,18 @@ fi
 ROOT="$(CDPATH= cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Suites build their own fixture repos and hooks; they must never inherit the CALLER's gate knobs
+# or git context (#63). The factory commit path runs this runner from inside a pre-commit hook,
+# under an env exporting CODEX_HOOK_REQUIRE_GATE=1: every fixture hook read REQUIRE_GATE=1 and
+# blocked, and an inherited GIT_INDEX_FILE pointed fixture repos at the OUTER index. Scrubbed once
+# here, the one entry point every suite runs through, rather than per suite. QK_TEST_* are the
+# suites' own knobs (e.g. QK_TEST_UTF8_LOCALE) and are deliberately kept.
+# awk, not grep: the substitution inherits errexit+pipefail, so a no-match grep (a plain git hook,
+# no gate knob set) would end it before `git rev-parse` ran and leak exactly the git context.
+while IFS= read -r v; do
+  unset "$v"
+done < <(compgen -e | awk '/^(REVIEW_HOOK_|CODEX_HOOK_|QK_)/ && !/^QK_TEST_/'; git rev-parse --local-env-vars)
+
 # `bin/selftest.test.sh` is deliberately NOT excluded. Excluding it looks like recursion avoidance
 # and is not: that suite copies this runner into throwaway roots and runs it THERE, against its own
 # fixtures, so nothing re-enters this tree. What the exclusion actually bought was a runner whose
