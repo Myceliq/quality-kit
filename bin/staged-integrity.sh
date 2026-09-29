@@ -21,6 +21,13 @@
 # `:(literal)` where it is a pathspec), so filenames containing spaces,
 # newlines, glob characters or a leading dash are handled rather than split,
 # globbed or read as options.
+# `declare -A` below needs Bash 4; macOS ships 3.2 as /bin/bash and always will
+# (licensing), so this refuses loudly instead of dying mid-script on the builtin.
+(( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || {
+  echo "quality-kit needs bash >= 4.4 (this is $BASH_VERSION); macOS ships 3.2 — brew install bash" >&2
+  exit 2
+}
+
 set -euo pipefail
 
 # This gate is BYTE-oriented end to end — git paths are bytes, its output is
