@@ -40,10 +40,10 @@ printf '{"no":"path"}' | bash "$DIR/format-changed-adapter.sh" && ok "adapter no
 SV="$DIR/stop-validate.sh"
 mk_repo() { # $1=fail(0|1) → fixture git repo whose validate-fast exits $1
   local r; r="$(mktemp -d)"
-  (cd "$r" && git init -q && git config core.hooksPath /dev/null && git commit -q --allow-empty -m init)
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init)
   printf '{"version":"0.1.0","profile":"python","runner":"make","pendingFlags":[]}' > "$r/.quality-kit.json"
   printf 'validate-fast:\n\t@exit %s\n' "$1" > "$r/Makefile"
-  (cd "$r" && git add -A && git commit -q -m fixture)
+  (cd "$r" && git add -A && git -c user.name=t -c user.email=t@t commit -q -m fixture)
   echo "$r"
 }
 R=$(mk_repo 0)
