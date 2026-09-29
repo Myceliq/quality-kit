@@ -26,17 +26,18 @@
 # local bin missing) for the SAME tool — a preset tool whose local bin is absent
 # must never trigger `npm ci`, or validation fails offline to install a bin
 # nobody will use.
+# #72: vitest (installed into the same toolchain by #69) is resolved exactly like
+# oxlint/oxfmt — preset-wins, paired install check — and exported for the
+# real-vitest cross-check suite #72 adds (no suite reads it yet), so a checkout
+# whose node_modules predates #69 (oxlint/oxfmt present, vitest absent)
+# reinstalls instead of exporting VITEST_BIN at a bin that does not exist.
+# One rule for both targets: two copies of this recipe had to be edited in
+# lockstep, and a drift between them is a gate that differs by entry point.
 TOOLCHAIN_BIN := ci/oxlint-toolchain/node_modules/.bin
 .PHONY: validate validate-fast
-validate:
-	@if ([ -z "$${OXLINT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxlint" ]) || ([ -z "$${OXFMT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]); then \
+validate validate-fast:
+	@if ([ -z "$${OXLINT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxlint" ]) || ([ -z "$${OXFMT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]) || ([ -z "$${VITEST_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/vitest" ]); then \
 	  echo "[make] toolchain missing — installing from the pinned lockfile..."; \
 	  (cd ci/oxlint-toolchain && npm ci --no-audit --no-fund) || exit 1; \
 	fi; \
-	OXLINT_BIN="$${OXLINT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxlint}" OXFMT_BIN="$${OXFMT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxfmt}" bash bin/selftest.sh
-validate-fast:
-	@if ([ -z "$${OXLINT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxlint" ]) || ([ -z "$${OXFMT_BIN:-}" ] && [ ! -x "$(TOOLCHAIN_BIN)/oxfmt" ]); then \
-	  echo "[make] toolchain missing — installing from the pinned lockfile..."; \
-	  (cd ci/oxlint-toolchain && npm ci --no-audit --no-fund) || exit 1; \
-	fi; \
-	OXLINT_BIN="$${OXLINT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxlint}" OXFMT_BIN="$${OXFMT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxfmt}" bash bin/selftest.sh
+	OXLINT_BIN="$${OXLINT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxlint}" OXFMT_BIN="$${OXFMT_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/oxfmt}" VITEST_BIN="$${VITEST_BIN:-$(CURDIR)/$(TOOLCHAIN_BIN)/vitest}" bash bin/selftest.sh

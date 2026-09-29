@@ -41,6 +41,7 @@ jobs:
           npm ci --no-audit --no-fund
           echo "OXLINT_BIN=$PWD/node_modules/.bin/oxlint" >> "$GITHUB_ENV"
           echo "OXFMT_BIN=$PWD/node_modules/.bin/oxfmt" >> "$GITHUB_ENV"
+          echo "VITEST_BIN=$PWD/node_modules/.bin/vitest" >> "$GITHUB_ENV"
       - name: Run all kit test suites
         run: |
           set -euo pipefail
