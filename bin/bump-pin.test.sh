@@ -11,6 +11,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BP="$DIR/bump-pin.sh"
+KITROOT="$(cd "$DIR/.." && pwd)"
 REAL_GIT="$(command -v git)"
 fail=0
 ok()  { echo "PASS $1"; }
@@ -57,6 +58,17 @@ mkdir -p "$STUBBIN"
 cat > "$STUBBIN/git" <<EOF
 #!/usr/bin/env bash
 REAL_GIT="$REAL_GIT"
+# bump-pin.sh's very first git call resolves ITS OWN checkout's origin remote
+# ("\$KIT" inside bump-pin.sh, always this test's real repo root) to build the
+# clone URL used later. That checkout is not guaranteed to carry a real origin
+# remote (e.g. under a validation sandbox that snapshots content without the
+# linked worktree's git metadata), so it is stubbed here rather than left to
+# fall through to the real git, which would make this suite's outcome depend
+# on ambient repo state it does not control.
+if [ "\$1" = "-C" ] && [ "\$2" = "$KITROOT" ] && [ "\$3" = "remote" ] && [ "\$4" = "get-url" ] && [ "\$5" = "origin" ]; then
+  echo "https://example.invalid/quality-kit.git"
+  exit 0
+fi
 case "\$1" in
   ls-remote)
     printf '1111111111111111111111111111111111111111\trefs/tags/quality-kit-v9.9.8\n'

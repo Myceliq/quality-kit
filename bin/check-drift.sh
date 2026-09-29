@@ -4,10 +4,11 @@
 # Why:  local edits stay free; merge is where weakening gets caught. Every
 #       failure names its remedy so a repair-loop agent can self-correct.
 set -euo pipefail
-RATCHET=0 TARGET="."
+RATCHET=0 QUARANTINE=0 TARGET="."
 while [ $# -gt 0 ]; do case "$1" in
-  --ratchet) RATCHET=1; shift ;;
-  -*)        echo "unknown flag $1 (usage: check-drift.sh <repo> [--ratchet])" >&2; exit 64 ;;
+  --ratchet)    RATCHET=1; shift ;;
+  --quarantine) QUARANTINE=1; shift ;;
+  -*)           echo "unknown flag $1 (usage: check-drift.sh <repo> [--ratchet] [--quarantine])" >&2; exit 64 ;;
   *)         TARGET="$1"; shift ;;
 esac; done
 REPO="$(cd "$TARGET" && pwd)"
@@ -1247,6 +1248,16 @@ except Exception as e:
     sys.exit(1)
 sys.exit(rc)
 PY
+
+# testQuarantine: the static pass checks the block's shape; --quarantine runs the
+# declared test command instead, which re-checks the shape first and refuses a
+# malformed block without running it. One call either way, so a shape error is
+# reported once. Lives in its own script, like the ratchet's baseline-rules.sh.
+if [ "$QUARANTINE" = 1 ]; then
+  bash "$KIT/bin/check-quarantine.sh" "$REPO" --run || fail=1
+else
+  bash "$KIT/bin/check-quarantine.sh" "$REPO" --static || fail=1
+fi
 
 if [ "$RATCHET" = 1 ]; then
   # The counting pass. Needs the repo's linter, so quality.yml runs it after
