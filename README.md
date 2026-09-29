@@ -30,6 +30,63 @@ are matched before any approval signal**, and every case in
 printed success. Read the comments there before widening a regex — two of them
 document gaps that are deliberate, where the obvious "fix" reopens a hole.
 
+### The staged-integrity preflight
+
+`bin/staged-integrity.sh` runs inside the hook's deterministic block, in a
+stamped repo, immediately **before** that repo's `validate:fast` and therefore
+before any model call. The profiles validate *language code* — Pyright, Ruff,
+tsc, a SLOC budget — and none of them sees a repository-shape defect. Four
+checks, all from Git itself, no new dependency:
+
+| check | what it refuses |
+|---|---|
+| `git diff --cached --check` | leftover conflict markers, and whitespace errors under the repo's own `core.whitespace` / `.gitattributes` rules |
+| blob size | a newly staged blob over the ceiling. Only new *content* counts: deletions carry no blob, a `chmod` or `git mv` re-lists the same object, and a large file already in `HEAD` and untouched never appears in the staged diff at all |
+| case fold | two tracked paths that differ only in case, which become one file on a macOS or Windows checkout |
+| symlinks | a symlink whose target is not in the commit — staged, or left broken because the commit deletes or renames what it points at, including emptying a directory it points at — and a symlink flattened into a regular file (index mode `120000` → `100644`) |
+
+It reads the **index** — `git ls-files`, `git diff --cached`, `git cat-file` —
+and never the working tree: the gate certifies what the commit will *contain*,
+and the two diverge the moment anything is staged with `git add -p` or edited
+after `git add`. All Git output is NUL-delimited, so paths with spaces,
+newlines, glob characters or a leading dash are handled rather than split.
+
+The size ceiling is **2 MiB** (`2097152` bytes), well clear of the largest
+lockfiles and committed fixtures in the fleet and well under anything a binary
+or a vendored archive reaches. Override it per repo or per commit with
+`QK_MAX_STAGED_BLOB_BYTES=<bytes>`; a malformed value falls back to the default
+with a notice rather than aborting, because a global hook that dies on a typo is
+a fleet-wide commit freeze.
+
+Three deliberate limits. The case fold is ASCII (`LC_ALL=C tolower`) over the
+whole path, so it catches the pair that actually loses data but not a `src/` vs
+`Src/` directory-case difference. Symlink targets that are absolute or climb
+above the repo root are left alone — they are not the index's business. And a
+link that was **already** broken when it was committed is not re-judged on every
+later commit: doing that would leave the repo unable to commit anything without
+`--no-verify`, and a gate people switch off is worse than the defect.
+
+The kit is installed by copying, so the hook looks for the script in its sibling
+`bin/` and then beside itself. In **neither** place the commit still proceeds by
+default — one uncopied file must not freeze every commit on a box — but the skip
+is reported the same machine-readable way an ungated review is:
+
+    [staged-integrity] PREFLIGHT_SKIPPED reason=preflight_missing
+
+and one row lands in the same `gate-skips.log`, same five columns, under a third
+class: `install_failure`. It is deliberately **not** a `GATE_SKIPPED` reason.
+Every reason that emitter takes means *this commit was not reviewed* — it says so
+on the way past — and here the reviewer runs normally, so filing it there would
+put "never reviewed" rows in the log for commits that were, and counting those
+rows is the whole point of the log. One schema to census, its own class so
+neither existing query picks it up by accident.
+
+`REVIEW_HOOK_REQUIRE_GATE=1`, or `"requireGate": true` in `.quality-kit.json`,
+refuses such a commit — before `validate:fast` and before the reviewer. A
+preflight that is not installed is not a blip: it recurs on every commit until
+someone copies the file, the same shape as `sandbox_init` and the opposite of an
+unreviewable diff.
+
 ### When the review does not run
 
 Every path that reaches a commit without a completed review now prints
@@ -40,12 +97,14 @@ human-readable sentence in the commit output, so nothing downstream could tell
 *reviewed and clean* from *never ran* — and in an agent-driven repo nobody reads
 the sentence.
 
-Reasons are classified into two kinds, because they want different answers:
+Reasons are classified into three kinds, because they want different answers.
+The class is the log's fifth column, so this table is what a census over it reads:
 
 | class | reasons | what it means |
 |---|---|---|
 | `provider_failure` | `codex_unavailable`, `usage_limit`, `sandbox_init`, `timeout`, `empty_output`, `error` | the review was **unavailable**. Retrying later works. |
 | `structural` | `oversize_diff`, `oversize_plan_diff`, `plan_doc_advisory` | the diff is **not reviewable in this form**. No retry rescues it. |
+| `install_failure` | `preflight_missing` | a **deterministic** gate is not installed. Written by `PREFLIGHT_SKIPPED`, not `GATE_SKIPPED` — the review itself ran. |
 
 `usage_limit` and `sandbox_init` are separate reasons on purpose: neither is
 transient. Usage exhaustion persists until the quota resets and a sandbox that
@@ -60,10 +119,16 @@ clone or a CI runner that never sourced anyone's profile. An explicit
 environment variable wins over the stamped value, so a deliberate one-off
 remains possible.
 
-Strict mode refuses an **outage**, not an unreviewable diff: only
-`provider_failure` blocks. Structural skips are still logged, but blocking them
-would leave a strict repo unable to land an oversized diff or a plan doc at all,
-and no retry or alternative reviewer would change the answer.
+Strict mode refuses an **outage**, not an unreviewable diff: of the review-skip
+classes, only `provider_failure` blocks. Structural skips are still logged, but
+blocking them would leave a strict repo unable to land an oversized diff or a
+plan doc at all, and no retry or alternative reviewer would change the answer.
+
+`install_failure` blocks under strict mode too, by the same reasoning rather than
+as an exception to it: a preflight that is not installed recurs on every commit
+until someone copies the file — `sandbox_init`'s shape, the opposite of a diff no
+retry can rescue. It is a separate class because the *review* still ran, so it
+must never be counted as an unreviewed commit.
 
 Knobs are read as `REVIEW_HOOK_<NAME>` first and `CODEX_HOOK_<NAME>` second
 (`LIB_ONLY`, `MAX_DIFF_BYTES`, `MODEL`, `REASONING_EFFORT`, `REQUIRE_GATE`,
