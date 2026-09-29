@@ -218,6 +218,26 @@ R="$(new_repo)"; ln -s nonexistent "$R/current"; ln -s current/config "$R/config
 git -C "$R" add -- current config-link
 script_blocks "a chain through a BROKEN ancestor link is still refused" "$R" "broken symlink"
 
+# Removing or renaming the INTERMEDIATE link of a committed chain. REMOVED holds
+# only `current`, and the committed `config-link` resolves to `current/config`,
+# so an exact-match lookup skips it. `current` has left the index, so it is not
+# judged either, and the commit would land with `config-link` dangling.
+# (Pre-PR panel finding, bugs lens.)
+chain_repo() {
+  local r; r="$(new_repo)"; mkdir -p "$r/versions/v1"; echo k=v > "$r/versions/v1/config"
+  ln -s versions/v1 "$r/current"; ln -s current/config "$r/config-link"
+  git -C "$r" add -- versions/v1/config current config-link
+  git -C "$r" commit -q -m chain
+  echo "$r"
+}
+R="$(chain_repo)"; git -C "$R" rm -q current
+script_blocks "removing an intermediate symlink refuses the link that ran through it" "$R" "broken symlink"
+R="$(chain_repo)"; git -C "$R" mv current latest
+script_blocks "renaming an intermediate symlink refuses the link that ran through it" "$R" "broken symlink"
+# Paired pass arm: the same removal, but the dependent link goes with it.
+R="$(chain_repo)"; git -C "$R" rm -q current config-link
+script_passes "removing the intermediate link together with its dependant passes" "$R"
+
 # The target exists on disk but is not in the index — the commit still contains a
 # link to nothing, which is precisely why existence is asked of the index.
 R="$(new_repo)"; echo t > "$R/target.txt"; ln -s target.txt "$R/lnk"

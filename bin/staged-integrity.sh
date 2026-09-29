@@ -282,9 +282,21 @@ for i in "${!LINK_PATHS[@]}"; do
   if ! resolve_in_repo "$link" "$target"; then
     continue  # absolute, or climbing above the root: outside the index's remit
   fi
-  # An already-committed link is judged only when this commit removes its target.
-  if [ "${LINK_STAGED[$i]}" != 1 ] && [ -z "${REMOVED[$RESOLVED]:-}" ]; then
-    continue
+  # An already-committed link is judged only when this commit removes its target
+  # OR any ancestor of it. The ancestor half matters when the target is reached
+  # through another symlink: with `config-link -> current/config` and
+  # `current -> versions/v1`, `git rm current` (or `git mv current latest`) marks
+  # only `current`. That link then leaves the index, so it is never judged on its
+  # own terms, and an exact-match lookup on `current/config` would wave the
+  # now-dangling `config-link` through.
+  if [ "${LINK_STAGED[$i]}" != 1 ]; then
+    hit="" p="$RESOLVED"
+    while [ -n "$p" ]; do
+      [ -n "${REMOVED[$p]:-}" ] && { hit=1; break; }
+      [ "$p" = "${p%/*}" ] && break
+      p="${p%/*}"
+    done
+    [ -n "$hit" ] || continue
   fi
   # ponytail: one `git ls-files` per judged link. Symlink counts in source repos
   # are single digits, and only links this commit touches get here. Build the
@@ -303,8 +315,9 @@ for i in "${!LINK_PATHS[@]}"; do
     # This exemption does NOT let a broken chain through, because the ancestor is
     # itself a symlink and gets judged on its own terms. Measured: with
     # `current -> nonexistent` and `config-link -> current/config` both staged,
-    # the commit is still refused — on `current`, whose target is untracked. The
-    # only gap is an ancestor committed broken EARLIER and not touched now, and
+    # the commit is still refused — on `current`, whose target is untracked. An
+    # ancestor this commit REMOVES is no longer a 120000 entry, so the walk below
+    # finds no link and the dependant is refused. The only gap is an ancestor committed broken EARLIER and not touched now, and
     # that is the pre-existing-link limit this file already documents and takes
     # deliberately, not a hole this escape opens.
     #
