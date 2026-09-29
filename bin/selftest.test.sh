@@ -205,5 +205,14 @@ if [ "$rc" -eq 0 ] && grep -q '1 suite(s) ran, 0 failed' <<<"$out"; then
 else
   bad "suites never inherit the caller's gate knobs or git context" "rc=$rc out=$out"
 fi
+# The plain-git-hook arm: git context only, no gate knob to scrub. A knob filter that fails on
+# no match must not take the git half down with it.
+rc=0; out="$(cd "$root" && GIT_INDEX_FILE=/nonexistent/index GIT_DIR=/nonexistent/.git \
+  GIT_WORK_TREE=/nonexistent QK_TEST_UTF8_LOCALE=C.UTF-8 bash bin/selftest.sh 2>&1)" || rc=$?
+if [ "$rc" -eq 0 ] && grep -q '1 suite(s) ran, 0 failed' <<<"$out"; then
+  ok "git context is scrubbed even when no gate knob is set"
+else
+  bad "git context is scrubbed even when no gate knob is set" "rc=$rc out=$out"
+fi
 
 [ "$fail" -eq 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
