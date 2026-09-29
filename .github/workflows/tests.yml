@@ -32,7 +32,9 @@ jobs:
       # Uses a committed lockfile + `npm ci` for a reproducible, transitively
       # pinned tree (the step's node_modules/ is gitignored, so it doesn't touch
       # the working tree the kit tests operate on). Regenerate the lockfile when
-      # ts/pins.json bumps oxlint, oxfmt or ultracite.
+      # ts/pins.json bumps any of its tools. vitest is installed too (#69), so kit
+      # suites can run real vitest at node_modules/.bin/vitest; every version must
+      # equal ts/pins.json, which ci/toolchain-pins.test.sh enforces.
       - name: Install the oxlint toolchain for the config integration tests
         run: |
           cd ci/oxlint-toolchain
