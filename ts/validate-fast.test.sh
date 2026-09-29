@@ -122,9 +122,9 @@ for p in "${PROFILES[@]}"; do
     || bad "$p: lint failure short-circuits the test step" "rc=$rc vitest=$(cat "$VITEST_LOG")"
 
   fixture R; edit_sum "$R"; run_fast "$R" "$FAST" FAKE_VITEST_ZERO=1
-  [ "$rc" != 0 ] && ! no_tc \
-    && ok "$p: an uncommitted source edit that still collects zero tests fails loudly" \
-    || bad "$p: an uncommitted source edit that still collects zero tests fails loudly" "rc=$rc out=$out"
+  [ "$rc" = 0 ] && has 'No test files found, exiting with code 0' && no_tc \
+    && ok "$p: an uncommitted source edit that collects zero tests keeps today's --changed behavior" \
+    || bad "$p: an uncommitted source edit that collects zero tests keeps today's --changed behavior" "rc=$rc out=$out"
 done
 
 # --- the three canonical JSONs: validate:fast agrees, every other key is as at eb55a39 ---
