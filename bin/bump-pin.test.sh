@@ -127,6 +127,7 @@ run_case() { # pin_version pin_profile open_prs branch_exists
   CASE_OUT="$(env PATH="$STUBBIN:$PATH" \
     STUB_LOG="$CASE_LOG" KIT_SRC_DIR="$KIT_FIXTURE" CONSUMER_SRC_BARE="$CASE_CONSUMER_BARE" \
     PIN_B64="$pin_b64" OPEN_PRS="$open_prs" BRANCH_EXISTS="$branch_exists" \
+    KIT_REMOTE="$KIT_FIXTURE" \
     bash "$BP" example/consumer 2>&1)" || CASE_RC=$?
 }
 

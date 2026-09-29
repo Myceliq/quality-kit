@@ -17,7 +17,10 @@ CONSUMER="${1:-}"
 
 # The kit's own remote — resolved from this checkout, never a hardcoded path,
 # so the script works from any clone of quality-kit (and a test's fixture).
-KIT_REMOTE="$(git -C "$KIT" remote get-url origin)"
+# KIT_REMOTE may be preset (the test suite does this): a worktree checkout's
+# .git points at admin state outside the worktree itself, which a snapshot of
+# just this directory does not carry, so `git -C "$KIT"` can't discover it.
+KIT_REMOTE="${KIT_REMOTE:-$(git -C "$KIT" remote get-url origin)}"
 
 # --- latest quality-kit-v* tag, semver-highest -------------------------------
 # `git ls-remote` reads the remote directly (global-constraints: origin, never
