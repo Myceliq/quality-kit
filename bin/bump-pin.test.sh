@@ -31,9 +31,11 @@ mkdir -p "$KIT_FIXTURE/bin"
 cat > "$KIT_FIXTURE/bin/stamp.sh" <<'STAMP'
 #!/usr/bin/env bash
 echo "STAMP_ARGV: $0 $*" >> "$STUB_LOG"
+[ "$3" = "${STAMP_FAIL:-}" ] && { echo "stamp: refused profile $3" >&2; exit 1; }
 echo "stamped profile=$3" > "$1/.stamp-marker"
 STAMP
 chmod +x "$KIT_FIXTURE/bin/stamp.sh"
+echo 9.9.9 > "$KIT_FIXTURE/VERSION"
 # bump-pin.sh runs from inside the fixture, so its `$KIT` is a real git repo
 # with an origin — whatever state this checkout's own .git is in (a worktree's
 # .git points at admin state outside the worktree, which may not be present).
@@ -45,19 +47,38 @@ cp "$BP" "$KIT_FIXTURE/bin/bump-pin.sh"
   && "$REAL_GIT" tag quality-kit-v9.9.9)
 "$REAL_GIT" -C "$KIT_FIXTURE" remote add origin "$KIT_FIXTURE"
 BP="$KIT_FIXTURE/bin/bump-pin.sh"
+KIT_TAG_SHA="$("$REAL_GIT" -C "$KIT_FIXTURE" rev-parse quality-kit-v9.9.9)"
+
+# A kit whose quality-kit-v9.9.9 tag sits on a commit whose VERSION says
+# otherwise: a py-pin consumer would refuse that checkout, so no PR may pin it.
+KIT_BADVER="$WORKROOT/kitsrc-badver"
+"$REAL_GIT" clone -q "$KIT_FIXTURE" "$KIT_BADVER"
+echo 9.9.7 > "$KIT_BADVER/VERSION"
+(cd "$KIT_BADVER" && "$REAL_GIT" config core.hooksPath /dev/null \
+  && "$REAL_GIT" -c user.name=t -c user.email=t@t commit -qam "wrong VERSION" \
+  && "$REAL_GIT" tag -f quality-kit-v9.9.9 >/dev/null)
 
 # --- fixture: a plain repo `gh repo clone` clones from (fresh bare per case) -
+# src/pin.py is a py-pin consumer's pin; src/nopin.py lacks the SHA line.
 CONSUMER_SRC="$WORKROOT/consumer-src"
-mkdir -p "$CONSUMER_SRC"
+mkdir -p "$CONSUMER_SRC/src"
+OLD_SHA=1111111111111111111111111111111111111111
+printf 'QUALITY_KIT = "/kit"\nQUALITY_KIT_SHA = "%s"\nQUALITY_KIT_VERSION = "9.9.8"\n' \
+  "$OLD_SHA" > "$CONSUMER_SRC/src/pin.py"
+printf 'QUALITY_KIT_VERSION = "9.9.8"\n' > "$CONSUMER_SRC/src/nopin.py"
+# src/link.py is a committed symlink out of the clone: the rewrite must refuse it.
+OUTSIDE="$WORKROOT/outside.py"
+cp "$CONSUMER_SRC/src/pin.py" "$OUTSIDE"
+ln -s "$OUTSIDE" "$CONSUMER_SRC/src/link.py"
 (cd "$CONSUMER_SRC" && "$REAL_GIT" init -q -b main \
   && "$REAL_GIT" config core.hooksPath /dev/null \
   && echo hi > README.md && "$REAL_GIT" add -A \
   && "$REAL_GIT" -c user.name=t -c user.email=t@t commit -q -m init)
 
 # --- PATH stubs for gh, and git's ls-remote/clone -----------------------------
-# Every other git subcommand (always invoked as `git -C <dir> <sub>` by
-# bump-pin.sh) falls through to the real binary below, since `$1` there is
-# `-C`, not one of the two cases this intercepts.
+# Every other git subcommand (`git -C <dir> <sub>`, or the py-pin probe's
+# `git init`) falls through to the real binary below, since `$1` there is
+# not one of the two cases this intercepts.
 STUBBIN="$WORKROOT/stubbin"
 mkdir -p "$STUBBIN"
 
@@ -101,6 +122,7 @@ case "\$1" in
   api)
     case "\$2" in
       */contents/.quality-kit.json) printf '%s' "\$PIN_B64" ;;
+      */contents/src/*) printf '%s' "\$PY_B64" ;;
       */branches/*) [ "\${BRANCH_EXISTS:-0}" = 1 ] && exit 0 || exit 1 ;;
       *) echo "gh api: unhandled \$2" >&2; exit 1 ;;
     esac
@@ -130,8 +152,12 @@ chmod +x "$STUBBIN/gh"
 
 # CASE_OUT / CASE_RC / CASE_LOG / CASE_CONSUMER_BARE are set by run_case.
 CASE_OUT="" CASE_RC=0 CASE_LOG="" CASE_CONSUMER_BARE=""
-run_case() { # pin_version pin_profile open_prs branch_exists
+# Any further args go to bump-pin.sh before the consumer (e.g. --py-pin src/pin.py).
+# CASE_KIT picks the kit fixture the stubbed clone serves; STAMP_FAIL (exported
+# by the caller) names a profile the fake stamp.sh refuses.
+run_case() { # pin_version pin_profile open_prs branch_exists [bump-pin args...]
   local pin_version="$1" pin_profile="$2" open_prs="$3" branch_exists="$4"
+  shift 4
   # Under $WORKROOT, not the system temp root: cleanup_all's `rm -r
   # "$WORKROOT"` then reaps every case's log and bare repo too, instead of
   # leaking one mktemp -d per run_case call.
@@ -141,6 +167,8 @@ run_case() { # pin_version pin_profile open_prs branch_exists
   "$REAL_GIT" -C "$CASE_CONSUMER_BARE" config core.hooksPath /dev/null
   local pin_b64
   pin_b64="$(printf '{"version":"%s","profile":"%s"}' "$pin_version" "$pin_profile" | base64)"
+  local py_b64
+  py_b64="$(printf 'QUALITY_KIT_SHA = "%s"\nQUALITY_KIT_VERSION = "%s"\n' "$OLD_SHA" "$pin_version" | base64)"
   CASE_RC=0
   # KIT_REMOTE is set explicitly here rather than left to bump-pin.sh's own
   # fallback (`git -C "$KIT" remote get-url origin`): that fallback reads
@@ -150,11 +178,13 @@ run_case() { # pin_version pin_profile open_prs branch_exists
   # value itself is inert: ls-remote and clone are both PATH-stubbed above
   # and ignore it, materializing tags/content from KIT_SRC_DIR instead.
   CASE_OUT="$(env PATH="$STUBBIN:$PATH" \
-    STUB_LOG="$CASE_LOG" KIT_SRC_DIR="$KIT_FIXTURE" CONSUMER_SRC_BARE="$CASE_CONSUMER_BARE" \
+    STUB_LOG="$CASE_LOG" KIT_SRC_DIR="${CASE_KIT:-$KIT_FIXTURE}" CONSUMER_SRC_BARE="$CASE_CONSUMER_BARE" \
     KIT_REMOTE="$KIT_FIXTURE" \
-    PIN_B64="$pin_b64" OPEN_PRS="$open_prs" BRANCH_EXISTS="$branch_exists" \
-    bash "$BP" example/consumer 2>&1)" || CASE_RC=$?
+    PIN_B64="$pin_b64" PY_B64="$py_b64" OPEN_PRS="$open_prs" BRANCH_EXISTS="$branch_exists" \
+    bash "$BP" "$@" example/consumer 2>&1)" || CASE_RC=$?
 }
+# The bump branch's copy of a consumer file, or empty if the branch never landed.
+bumped() { "$REAL_GIT" -C "$CASE_CONSUMER_BARE" show "refs/heads/quality-kit/bump-9.9.9:$1" 2>/dev/null || true; }
 
 # --- 64: usage, no args ------------------------------------------------------
 rc=0; out="$(bash "$BP" 2>&1)" || rc=$?
@@ -203,5 +233,80 @@ echo "$pr_create_line" | grep -q "9\.9\.8" && echo "$pr_create_line" | grep -q "
   && ok "PR body names both versions" || bad "PR body names both versions" "$pr_create_line"
 "$REAL_GIT" -C "$CASE_CONSUMER_BARE" show-ref --verify --quiet refs/heads/quality-kit/bump-9.9.9 \
   && ok "the bump branch actually landed on the remote" || bad "the bump branch actually landed on the remote" "not found"
+
+# === --py-pin: QUALITY_KIT_SHA / QUALITY_KIT_VERSION constants in source =====
+
+# --- 64: a malformed py-pin invocation ---------------------------------------
+for args in "--py-pin" "--py-pin ../x.py example/consumer" "--py-pin /etc/x.py example/consumer" \
+            "--py-pin src/pin.py" "example/consumer extra"; do
+  rc=0; out="$(bash "$BP" $args 2>&1)" || rc=$?
+  [ "$rc" = 64 ] && ok "usage '$args' -> 64" || bad "usage '$args' -> 64" "rc=$rc out=$out"
+done
+
+# --- 3: QUALITY_KIT_VERSION already at the latest tag ------------------------
+run_case 9.9.9 "" 0 0 --py-pin src/pin.py
+[ "$CASE_RC" = 3 ] && ok "py-pin: current pin exits 3" || bad "py-pin: current pin exits 3" "rc=$CASE_RC out=$CASE_OUT"
+[ -s "$CASE_LOG" ] && bad "py-pin: current pin does no clone" "log: $(cat "$CASE_LOG")" || ok "py-pin: current pin does no clone"
+
+# --- 0: happy path — prove the kit stamps, rewrite both constants, draft PR --
+run_case 9.9.8 "" 0 0 --py-pin src/pin.py
+[ "$CASE_RC" = 0 ] && ok "py-pin: happy path exits 0" || bad "py-pin: happy path exits 0" "rc=$CASE_RC out=$CASE_OUT"
+pin_after="$(bumped src/pin.py)"
+# Mutation target: rewrite only one constant and one of these goes red.
+grep -qx "QUALITY_KIT_SHA = \"$KIT_TAG_SHA\"" <<<"$pin_after" \
+  && ok "py-pin: SHA rewritten to the tag's commit" || bad "py-pin: SHA rewritten to the tag's commit" "$pin_after"
+grep -qx 'QUALITY_KIT_VERSION = "9.9.9"' <<<"$pin_after" \
+  && ok "py-pin: VERSION rewritten to the tag's version" || bad "py-pin: VERSION rewritten to the tag's version" "$pin_after"
+grep -qx 'QUALITY_KIT = "/kit"' <<<"$pin_after" \
+  && ok "py-pin: other lines untouched" || bad "py-pin: other lines untouched" "$pin_after"
+# Mutation target: drop the stamp probe loop and this goes red.
+for profile in nextjs vite node python; do
+  grep -qE "^STAMP_ARGV: .*/stamp-$profile --profile $profile$" "$CASE_LOG" \
+    && ok "py-pin: real-kit stamp probe ran for $profile" || bad "py-pin: real-kit stamp probe ran for $profile" "log: $(cat "$CASE_LOG")"
+done
+[ -z "$(bumped .stamp-marker)" ] \
+  && ok "py-pin: the consumer itself is not stamped" || bad "py-pin: the consumer itself is not stamped" "marker present"
+pr_create_line="$(grep "^gh pr create" "$CASE_LOG" || true)"
+echo "$pr_create_line" | grep -q -- " --draft" \
+  && ok "py-pin: PR opened as a draft" || bad "py-pin: PR opened as a draft" "$pr_create_line"
+echo "$pr_create_line" | grep -q "$KIT_TAG_SHA" \
+  && ok "py-pin: PR body names the pinned sha" || bad "py-pin: PR body names the pinned sha" "$pr_create_line"
+
+# --- refused: the tag's VERSION disagrees with the tag -----------------------
+# Mutation target: drop the VERSION check and this pins a checkout the
+# consumer would refuse to run.
+CASE_KIT="$KIT_BADVER" run_case 9.9.8 "" 0 0 --py-pin src/pin.py
+[ "$CASE_RC" = 1 ] && ok "py-pin: tag/VERSION mismatch refuses" || bad "py-pin: tag/VERSION mismatch refuses" "rc=$CASE_RC out=$CASE_OUT"
+grep -q "VERSION reads 9.9.7" <<<"$CASE_OUT" \
+  && ok "py-pin: mismatch names the VERSION it read" || bad "py-pin: mismatch names the VERSION it read" "$CASE_OUT"
+grep -q "^gh " "$CASE_LOG" && bad "py-pin: mismatch clones and opens nothing" "log: $(cat "$CASE_LOG")" \
+  || ok "py-pin: mismatch clones and opens nothing"
+
+# --- refused: the real kit at the tag fails to stamp a profile ---------------
+export STAMP_FAIL=vite
+run_case 9.9.8 "" 0 0 --py-pin src/pin.py
+unset STAMP_FAIL
+[ "$CASE_RC" = 1 ] && ok "py-pin: stamp failure refuses" || bad "py-pin: stamp failure refuses" "rc=$CASE_RC out=$CASE_OUT"
+grep -q "fails to stamp profile vite" <<<"$CASE_OUT" \
+  && ok "py-pin: stamp failure names the profile" || bad "py-pin: stamp failure names the profile" "$CASE_OUT"
+grep -q "^gh " "$CASE_LOG" && bad "py-pin: stamp failure clones and opens nothing" "log: $(cat "$CASE_LOG")" \
+  || ok "py-pin: stamp failure clones and opens nothing"
+
+# --- refused: the file lacks one of the two constants ------------------------
+run_case 9.9.8 "" 0 0 --py-pin src/nopin.py
+[ "$CASE_RC" != 0 ] && ok "py-pin: missing SHA line refuses" || bad "py-pin: missing SHA line refuses" "rc=$CASE_RC out=$CASE_OUT"
+grep -q "^gh pr create" "$CASE_LOG" && bad "py-pin: missing SHA line opens no PR" "log: $(cat "$CASE_LOG")" \
+  || ok "py-pin: missing SHA line opens no PR"
+"$REAL_GIT" -C "$CASE_CONSUMER_BARE" show-ref --verify --quiet refs/heads/quality-kit/bump-9.9.9 \
+  && bad "py-pin: missing SHA line pushes no branch" "branch landed" || ok "py-pin: missing SHA line pushes no branch"
+
+# --- refused: the pin path is a symlink out of the consumer clone ------------
+# Mutation target: drop the realpath check and the host file gets rewritten.
+run_case 9.9.8 "" 0 0 --py-pin src/link.py
+[ "$CASE_RC" != 0 ] && ok "py-pin: symlinked pin path refuses" || bad "py-pin: symlinked pin path refuses" "rc=$CASE_RC out=$CASE_OUT"
+cmp -s "$OUTSIDE" "$CONSUMER_SRC/src/pin.py" \
+  && ok "py-pin: symlink target outside the clone untouched" || bad "py-pin: symlink target outside the clone untouched" "$(cat "$OUTSIDE")"
+grep -q "^gh pr create" "$CASE_LOG" && bad "py-pin: symlinked pin path opens no PR" "log: $(cat "$CASE_LOG")" \
+  || ok "py-pin: symlinked pin path opens no PR"
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
