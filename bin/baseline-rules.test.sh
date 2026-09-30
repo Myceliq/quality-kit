@@ -81,4 +81,24 @@ rc=0; out="$(bash "$BR" "$D" 2>"$DERR")" || rc=$?
 [ "$rc" = 3 ] && [ "$out" = "{}" ] && ! grep -q "working tree is dirty" "$DERR" \
   && ok "clean repo does not warn" || bad "clean repo does not warn" "rc=$rc out=$out err=$(cat "$DERR")"
 
+# --- a repo path holding a quote keeps the exit-4 contract ---
+# The failure message names the repo; built by interpolating $REPO into the
+# python3 -c source, a quote in the path made that message a SyntaxError
+# traceback instead. Stubs on both profiles' failure paths, so no toolchain.
+T="$(mktemp -d)"
+Q="$T/it's"; mkdir -p "$Q/node_modules/.bin" "$T/bin"
+printf '{"version":"0.2.0","profile":"nextjs","runner":"npm","pendingFlags":[],"ruleOverrides":{"burnDown":{},"permanent":{}},"ignoreOverrides":[]}\n' > "$Q/.quality-kit.json"
+printf '{"name":"q","scripts":{"lint":"oxlint"}}\n' > "$Q/package.json"
+printf '#!/usr/bin/env bash\necho crash; exit 1\n' > "$Q/node_modules/.bin/oxlint"
+chmod +x "$Q/node_modules/.bin/oxlint"
+rc=0; out="$(bash "$BR" "$Q" 2>"$T/err")" || rc=$?
+[ "$rc" = 4 ] && [ "$out" = "{}" ] && ! grep -q SyntaxError "$T/err" && grep -qF "baseline-rules.sh $Q" "$T/err" \
+  && ok "quoted repo path: crashed linter still exits 4 with {} (ts)" || bad "quoted repo path: crashed linter still exits 4 with {} (ts)" "rc=$rc out=$out err=$(cat "$T/err")"
+printf '#!/usr/bin/env bash\necho "ruff: boom" >&2; exit 2\n' > "$T/bin/ruff"
+chmod +x "$T/bin/ruff"
+printf '{"version":"0.2.0","profile":"python","runner":"make","pendingFlags":[],"ruleOverrides":{"burnDown":{},"permanent":{}},"ignoreOverrides":[]}\n' > "$Q/.quality-kit.json"
+rc=0; out="$(PATH="$T/bin:$PATH" bash "$BR" "$Q" 2>"$T/err")" || rc=$?
+[ "$rc" = 4 ] && [ "$out" = "{}" ] && ! grep -q SyntaxError "$T/err" && grep -qF "baseline-rules.sh $Q" "$T/err" \
+  && ok "quoted repo path: crashed linter still exits 4 with {} (python)" || bad "quoted repo path: crashed linter still exits 4 with {} (python)" "rc=$rc out=$out err=$(cat "$T/err")"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
