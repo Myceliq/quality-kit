@@ -1287,6 +1287,42 @@ rc=0; out="$(ratchet "$W")" || rc=$?
 [ "$rc" != 0 ] && echo "$out" | grep -q "linter failed to run" && echo "$out" | grep -q "did not produce a valid" \
   && ok "the ratchet surfaces the linter's own failure diagnostic" || bad "the ratchet surfaces the linter's own failure diagnostic" "rc=$rc $out"
 
+# TS ratchet against REAL oxlint + the stamped nextjs config: the stub above
+# fixes the diagnostic shape by hand, so only a real run proves the whole
+# counting path — config demotes burn-down rules to warn, oxlint still reports
+# them, baseline-rules.sh normalizes eslint(x) -> x and plugin(x) -> plugin/x,
+# and the ratchet compares. OXLINT_BIN is the toolchain CI installs (its
+# node_modules has ultracite); unset only under KIT_SELFTEST_NO_TOOLCHAIN,
+# since bin/selftest.sh refuses to run without it.
+# ponytail: the shim drops --type-aware because the kit toolchain carries no
+# oxlint-tsgolint, so type-aware rules' counting stays untested; add tsgolint to
+# ci/oxlint-toolchain (it is already in ts/pins.json) to cover them.
+if [ -n "${OXLINT_BIN:-}" ]; then
+  OXR="$(cd "$(dirname "$OXLINT_BIN")" && pwd)/$(basename "$OXLINT_BIN")"
+  NMR="$(cd "$(dirname "$OXR")/.." && pwd)"
+  T="$(fresh)"
+  mkdir -p "$T/node_modules/.bin"
+  ln -s "$NMR/oxlint" "$T/node_modules/oxlint"; ln -s "$NMR/ultracite" "$T/node_modules/ultracite"
+  printf '#!/usr/bin/env bash\nargs=(); for a in "$@"; do [ "$a" = --type-aware ] || args+=("$a"); done\nexec %q "${args[@]}"\n' "$OXR" > "$T/node_modules/.bin/oxlint"
+  chmod +x "$T/node_modules/.bin/oxlint"
+  # two eslint(func-style), one unicorn(prefer-node-protocol)
+  printf 'import { readFileSync } from "fs";\n\nconst y = () => 2;\nexport function a() { return y(); }\nexport function b() { return readFileSync("x"); }\n' > "$T/probe.ts"
+  qk_mut "$T" "d['ruleOverrides']['burnDown']={'func-style':2,'unicorn/prefer-node-protocol':1}"
+  rc=0; out="$(ratchet "$T")" || rc=$?
+  [ "$rc" = 0 ] && ok "real oxlint: exact burn-down counts pass (ts)" || bad "real oxlint: exact burn-down counts pass (ts)" "rc=$rc $out"
+  qk_mut "$T" "d['ruleOverrides']['burnDown']={'func-style':1,'unicorn/prefer-node-protocol':1}"
+  out="$(ratchet "$T" || true)"
+  echo "$out" | grep -q "DRIFT: burn-down regressed: func-style 2 > recorded 1" \
+    && ok "real oxlint: a regressed count fails (ts)" || bad "real oxlint: a regressed count fails (ts)" "$out"
+  printf 'const y = () => 2;\nexport function a() { return y(); }\nexport function b() { return y(); }\n' > "$T/probe.ts"
+  qk_mut "$T" "d['ruleOverrides']['burnDown']={'func-style':2,'unicorn/prefer-node-protocol':1}"
+  out="$(ratchet "$T" || true)"
+  echo "$out" | grep -q "DRIFT: burn-down complete for unicorn/prefer-node-protocol" \
+    && ok "real oxlint: a plugin rule at zero reports complete (ts)" || bad "real oxlint: a plugin rule at zero reports complete (ts)" "$out"
+else
+  echo "SKIP real-oxlint TS ratchet (OXLINT_BIN unset)"
+fi
+
 # python ratchet against real ruff: 3 unused imports recorded as 2 must fail
 if command -v uvx >/dev/null 2>&1; then
   Q="$(mktemp -d)"; (cd "$Q" && git init -q && git config core.hooksPath /dev/null \

@@ -87,4 +87,16 @@ except ValueError:
 print(sum(1 for x in d['diagnostics'] if x['code']=='eslint(func-style)'))" <<<"$out")"
 [ "$n" = 1 ] && ok "missing .quality-kit.json falls back, config still loads" || bad "missing .quality-kit.json falls back, config still loads" "n=$n"
 
+# ...but a CORRUPT .quality-kit.json must stay loud: the configs catch only ENOENT
+# and re-throw everything else. A broadened `catch {}` would fall back to fleet
+# rules here and lint cleanly, silently dropping every declared override. All
+# three shipped configs carry their own copy of the catch, so each is loaded.
+printf '{"version": oops' > "$W/.quality-kit.json"
+for p in node nextjs vite; do
+  cp "$KITROOT/ts/oxlint.config.$p.ts" "$W/oxlint.config.ts"
+  rc=0; out="$(cd "$W" && "$OXLINT" -f json probe.ts 2>&1)" || rc=$?
+  [ "$rc" != 0 ] && echo "$out" | grep -q "Failed to load config" && echo "$out" | grep -q "is not valid JSON" \
+    && ok "corrupt .quality-kit.json is a config-load error ($p)" || bad "corrupt .quality-kit.json is a config-load error ($p)" "rc=$rc $out"
+done
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
