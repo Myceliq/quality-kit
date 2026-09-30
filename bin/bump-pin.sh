@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# What: open a re-stamp PR in a consumer repo when its pinned kit version is
-#       behind the latest quality-kit-v* release.
+# What: open a pin-bump PR in a consumer repo when its pinned kit version is
+#       behind the latest quality-kit-v* release (a re-stamp by default, or a
+#       QUALITY_KIT_SHA/QUALITY_KIT_VERSION rewrite with --py-pin).
 # Where: quality-kit/bin; called by the drift checker (#deploy-drift task 3)
 #        so a kit upgrade doesn't depend on someone remembering to re-stamp
 #        every fleet repo by hand.
@@ -167,7 +168,7 @@ git -C "$CONSUMER_DIR" push -q -u origin "$BRANCH"
 
 # --draft: a consumer's merge sweep may squash-merge any green non-draft PR
 # (booking-platform's does), so a ready bump would reach main unreviewed.
-# A human marks it ready after reading the re-stamp diff. Both pin shapes.
+# A human marks it ready after reading the bump diff. Both pin shapes.
 gh pr create --draft --repo "$CONSUMER" --head "$BRANCH" \
   --title "chore(quality-kit): bump pin to $LATEST_VERSION" \
   --body "$BODY"
