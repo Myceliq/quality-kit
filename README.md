@@ -201,6 +201,7 @@ edited on a branch inside a worktree does not take effect there.
         "permanent": { "import/no-default-export": { "level": "off", "why": "Next.js pages require default exports" } }
       },
       "ignoreOverrides": ["src/generated/**"],
+      "ignoreOverridesWhy": { "src/generated/**": "codegen output, regenerated on every build" },
       "locBudget": { "budget": 5000, "paths": ["src/**", "scripts/*.sh"] }
     }
 
@@ -222,6 +223,13 @@ edited on a branch inside a worktree does not take effect there.
 - `ruleOverrides.permanent` — `rule → {level, why}`, never generated. `level` is
   `off` or `warn` (python: `off` only). A non-empty `why` is enforced.
 - `ignoreOverrides` — repo-specific ignore globs appended to the fleet preset's.
+- `ignoreOverridesWhy` — `glob → why`, one non-empty reason for every
+  `ignoreOverrides` glob, enforced. An ignore silences every rule on its path
+  and drops the path from the burn-down count, so it is held to at least the
+  bar of a single `permanent` rule-off. A reason for a glob that is no longer
+  in `ignoreOverrides` is refused too — remove it with the glob. A separate map
+  rather than objects in `ignoreOverrides`, so the list stays the plain glob
+  list the ruff render and the oxlint configs read.
 - `locBudget` — optional. `bin/loc-budget.sh <repo>` fails when tracked source
   under `paths` (git pathspecs) exceeds `budget`, counting language-aware SLOC
   (blank lines, comments, and Python docstrings are free). `LOC_PATHS` /
@@ -255,8 +263,9 @@ re-stamp byte-exact.
 ## Rule overrides — how they are enforced
 
 - **Static** (`check-drift.sh <repo>`, toolchain-free, runs before install):
-  schema — shapes, non-empty `why`, no rule in both sections, valid levels,
-  positive integer counts.
+  schema — shapes, a non-empty `why` for every `permanent` rule and every
+  `ignoreOverrides` glob, no rule in both sections, valid levels, positive
+  integer counts.
 - **Ratchet** (`check-drift.sh <repo> --ratchet`, runs after install): the real
   counting pass, wired into the stamped `quality.yml` as a post-install step.
 - **Fail-closed on unknown rule keys.** The static check validates shape, not

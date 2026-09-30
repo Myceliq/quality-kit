@@ -85,10 +85,13 @@ if [ "$PROFILE" = python ]; then
   # execve() rejects an over-long argument list outright. stderr is captured
   # to a separate file (not merged into RAW) so stdout stays pure JSON — on
   # failure its contents are what actually tell the operator why ruff crashed.
+  # $REPO rides argv too, never the -c source: a path holding a quote or a
+  # brace would otherwise turn the exit-4 failure into a SyntaxError.
   python3 -c "
 import collections, json, sys
 rc = int(sys.argv[1])
 errf = sys.argv[2]
+repo = sys.argv[3]
 raw = sys.stdin.read()
 diags = None
 if rc == 0:
@@ -100,12 +103,12 @@ if rc == 0:
         pass
 if diags is None:
     print('{}')
-    print(f'baseline-rules.sh: ruff check failed to produce a valid rule list (exit {rc}) — not seeding a baseline; fix the failure, then run: quality-kit/bin/baseline-rules.sh $REPO', file=sys.stderr)
+    print(f'baseline-rules.sh: ruff check failed to produce a valid rule list (exit {rc}) — not seeding a baseline; fix the failure, then run: quality-kit/bin/baseline-rules.sh {repo}', file=sys.stderr)
     err = open(errf).read().strip()
     print(err[-2000:] if err else raw[-2000:], file=sys.stderr)
     sys.exit(4)
 c = collections.Counter(x['code'] for x in diags if x.get('code'))
-print(json.dumps(dict(sorted(c.items()))))" "$RUFF_RC" "$ERRF" <<<"$RAW"
+print(json.dumps(dict(sorted(c.items()))))" "$RUFF_RC" "$ERRF" "$REPO" <<<"$RAW"
   exit 0
 fi
 
@@ -131,8 +134,10 @@ RAW="$( (cd "$REPO" && npm run --silent lint -- --format=json) 2>/dev/null || tr
 # piped via stdin, not argv: a real repo's lint output (thousands of
 # diagnostics, each carrying file/message/help text) can be megabytes —
 # well past ARG_MAX — and execve() rejects an over-long argument list outright.
+# $REPO is argv[1], never interpolated into the -c source.
 python3 -c "
 import collections, json, sys
+repo = sys.argv[1]
 raw = sys.stdin.read()
 diags = None
 try:
@@ -143,7 +148,7 @@ except Exception:
     pass
 if diags is None:
     print('{}')
-    print('baseline-rules.sh: npm run lint -- --format=json did not produce a valid {\"diagnostics\": [...]} payload — linter crashed or is misconfigured; not seeding a baseline; fix the failure, then run: quality-kit/bin/baseline-rules.sh $REPO', file=sys.stderr)
+    print('baseline-rules.sh: npm run lint -- --format=json did not produce a valid {\"diagnostics\": [...]} payload — linter crashed or is misconfigured; not seeding a baseline; fix the failure, then run: quality-kit/bin/baseline-rules.sh ' + repo, file=sys.stderr)
     print(raw[-2000:], file=sys.stderr)
     sys.exit(4)
 def norm(code):
@@ -152,4 +157,4 @@ def norm(code):
         return r if p == 'eslint' else f'{p}/{r}'
     return code
 c = collections.Counter(norm(d['code']) for d in diags if d.get('code'))
-print(json.dumps(dict(sorted(c.items()))))" <<<"$RAW"
+print(json.dumps(dict(sorted(c.items()))))" "$REPO" <<<"$RAW"

@@ -275,7 +275,9 @@ def w(p, d): open(p, "w").write(json.dumps(d, indent=2) + "\n")
 
 # .quality-kit.json — the stamper owns version/profile/runner; every other key
 # is repo-owned sanctioned variation (pendingFlags, ruleOverrides,
-# ignoreOverrides) and must survive a re-stamp byte-exact. A re-stamp that
+# ignoreOverrides, ignoreOverridesWhy) and must survive a re-stamp byte-exact.
+# ignoreOverridesWhy rides the dict(prev) copy below rather than a default: a
+# repo with no ignore globs owes no reasons, so it gets no key. A re-stamp that
 # silently reset a burn-down count would erase the ratchet's memory.
 qk_path = os.path.join(repo, ".quality-kit.json")
 prev = j(qk_path)

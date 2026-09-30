@@ -167,6 +167,21 @@ def check_overrides():
     ign = qk.get("ignoreOverrides", [])
     if not isinstance(ign, list) or any(not isinstance(g, str) for g in ign):
         err("ignoreOverrides must be a list of glob strings — fix .quality-kit.json")
+        return
+    # An ignore glob is the broadest lever here: it silences EVERY rule on the
+    # path and drops the path from the burn-down count. So it owes a reason at
+    # least as much as a single permanent rule-off does. The reasons live in a
+    # parallel glob -> why map, keeping ignoreOverrides a plain string list for
+    # render-ruff.sh and the three oxlint configs that consume it.
+    why = qk.get("ignoreOverridesWhy", {})
+    if not isinstance(why, dict):
+        err("ignoreOverridesWhy must be an object mapping each ignoreOverrides glob to its reason — fix .quality-kit.json")
+        return
+    for g in ign:
+        if not isinstance(why.get(g), str) or not why[g].strip():
+            err(f"ignoreOverrides[{g}] needs a non-empty why in ignoreOverridesWhy — an ignore silences every rule on the path and hides it from the burn-down count, so it must state its reason")
+    for g in sorted(set(why) - set(ign)):
+        err(f"ignoreOverridesWhy[{g}] justifies a glob that is not in ignoreOverrides — remove the stale entry")
 
 NEXT_FLOOR = (16, 3, 1)
 
