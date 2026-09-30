@@ -41,7 +41,9 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
     severity). `why` is required and must say what makes the rule wrong here,
     not that it was inconvenient.
   - `ignoreOverrides` — repo-specific ignore globs (generated dirs, vendored
-    code), appended to the fleet preset's patterns.
+    code), appended to the fleet preset's patterns. Every glob needs a reason
+    in `ignoreOverridesWhy` (`glob → why`): an ignore silences every rule on
+    the path, so the bar is at least that of a `permanent` entry.
 - Never delete or skip tests to get green.
 - CHORE markers record out-of-footprint cleanup instead of doing it:
   `CHORE(<what is wrong>): <the cheaper shape>`, in that file's own comment syntax. Only in

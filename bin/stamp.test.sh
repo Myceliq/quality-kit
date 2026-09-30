@@ -116,6 +116,7 @@ p='$O/.quality-kit.json'; d=json.load(open(p))
 d['ruleOverrides']['burnDown']={'func-style':12}
 d['ruleOverrides']['permanent']={'import/no-default-export':{'level':'off','why':'framework requires it'}}
 d['ignoreOverrides']=['src/generated/**']
+d['ignoreOverridesWhy']={'src/generated/**':'codegen output'}
 d['customRepoKey']='keep'                # hypothetical future top-level key, unknown to the stamper
 d['ruleOverrides']['futureSubkey']={}     # hypothetical future ruleOverrides subkey, unknown to the stamper
 json.dump(d,open(p,'w'))"
@@ -126,6 +127,7 @@ d=json.load(open('$O/.quality-kit.json'))
 assert d['ruleOverrides']['burnDown']=={'func-style':12}, d
 assert d['ruleOverrides']['permanent']['import/no-default-export']['why']=='framework requires it', d
 assert d['ignoreOverrides']==['src/generated/**'], d
+assert d.get('ignoreOverridesWhy')=={'src/generated/**':'codegen output'}, d
 assert d.get('customRepoKey')=='keep', f'stamper dropped an unknown top-level repo-owned key on re-stamp: {d}'
 assert d['ruleOverrides'].get('futureSubkey')=={}, f'stamper dropped an unknown ruleOverrides subkey on re-stamp: {d}'
 " && ok "override keys survive re-stamp" || bad "override keys survive re-stamp" "assertion failed"

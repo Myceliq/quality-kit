@@ -1218,8 +1218,29 @@ R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'x/y':'off'}"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*must be an object with level and why" && ok "non-object permanent entry rejected" || bad "non-object permanent entry rejected (would crash instead of naming a remedy)" "$out"
 
+# an ignore glob silences every rule on its path and hides it from the burn-down
+# count, so it owes a why like a permanent rule-off does (ignoreOverridesWhy)
+R="$(fresh)"; qk_mut "$R" "d['ignoreOverrides']=['src/generated/**']"
+out="$(run "$R" || true)"
+echo "$out" | grep -qF "DRIFT: ignoreOverrides[src/generated/**] needs a non-empty why" && ok "ignoreOverrides glob without a why rejected" || bad "ignoreOverrides glob without a why rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ignoreOverrides']=['src/generated/**']; d['ignoreOverridesWhy']={'src/generated/**':'  '}"
+out="$(run "$R" || true)"
+echo "$out" | grep -qF "DRIFT: ignoreOverrides[src/generated/**] needs a non-empty why" && ok "blank ignoreOverrides why rejected" || bad "blank ignoreOverrides why rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ignoreOverrides']=['src/generated/**']; d['ignoreOverridesWhy']=['codegen output']"
+out="$(run "$R" || true)"
+echo "$out" | grep -qF "DRIFT: ignoreOverridesWhy must be an object" && ok "non-object ignoreOverridesWhy rejected" || bad "non-object ignoreOverridesWhy rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ignoreOverridesWhy']={'vendor/**':'third-party code'}"
+out="$(run "$R" || true)"
+echo "$out" | grep -qF "DRIFT: ignoreOverridesWhy[vendor/**] justifies a glob that is not in ignoreOverrides" && ok "stale ignoreOverridesWhy entry rejected" || bad "stale ignoreOverridesWhy entry rejected" "$out"
+
+R="$(fresh)"; qk_mut "$R" "d['ignoreOverrides']=['src/generated/**']; d['ignoreOverridesWhy']={'src/generated/**':'codegen output, regenerated on build'}"
+run "$R" >/dev/null && ok "ignoreOverrides glob with a why stays clean" || bad "ignoreOverrides glob with a why stays clean" "$(run "$R" || true)"
+
 # a well-formed override set is clean
-R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'import/no-default-export':{'level':'off','why':'Next.js pages require default exports'}}; d['ignoreOverrides']=['src/generated/**']"
+R="$(fresh)"; qk_mut "$R" "d['ruleOverrides']['permanent']={'import/no-default-export':{'level':'off','why':'Next.js pages require default exports'}}; d['ignoreOverrides']=['src/generated/**']; d['ignoreOverridesWhy']={'src/generated/**':'codegen output, regenerated on build'}"
 run "$R" >/dev/null && ok "valid overrides stay clean" || bad "valid overrides stay clean" "$(run "$R" || true)"
 
 # warn IS renderable on a ts profile (oxlint has a warn severity) — only the
