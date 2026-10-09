@@ -97,6 +97,34 @@ for b in '[]' '"x"' '{"command": "bash emit.sh", "entries": {}}'; do
   T="container $b does not traceback"; refute line_has "$out" Traceback
 done
 
+# the bound is date-only: a run-count key would read as enforced but never is
+for k in runs maxRuns runCount; do
+  qset "$R" "$(block "{\"test\": \"suite::flaky\", \"expires\": \"2999-12-31\", \"$k\": 3, \"reason\": \"races the clock\"}")"
+  rc=0; out="$(static "$R")" || rc=$?
+  T="entry key [$k] refused"; check [ "$rc" = 1 ]
+  T="entry key [$k] named as unsupported run-count, asks for expires"; check drift_has "$out" "$k" suite::flaky run-count expires
+done
+
+for k in expiry until; do
+  qset "$R" "$(block "{\"test\": \"suite::flaky\", \"expires\": \"2999-12-31\", \"$k\": \"2999-12-31\", \"reason\": \"races the clock\"}")"
+  rc=0; out="$(static "$R")" || rc=$?
+  T="entry key [$k] refused"; check [ "$rc" = 1 ]
+  T="entry key [$k] named"; check drift_has "$out" "$k" suite::flaky
+  T="entry key [$k] does not traceback"; refute line_has "$out" Traceback
+  T="entry key [$k] is no internal gate error"; refute line_has "$out" "internal gate error"
+done
+
+qset "$R" "{\"command\": \"bash emit.sh\", \"entries\": [$LIVE], \"maxRuns\": 3}"
+rc=0; out="$(static "$R")" || rc=$?
+T="block key [maxRuns] refused"; check [ "$rc" = 1 ]
+T="block key [maxRuns] named"; check drift_has "$out" testQuarantine maxRuns
+
+qset "$R" '{"command": "bash emit.sh", "entries": {}, "owner": "x"}'
+rc=0; out="$(static "$R")" || rc=$?
+T="block key [owner] beside malformed entries refused"; check [ "$rc" = 1 ]
+T="block key [owner] beside malformed entries named"; check drift_has "$out" testQuarantine owner
+T="malformed entries still named beside block key"; check drift_has "$out" testQuarantine.entries
+
 # --- Requirement: quarantined-skip ---
 qset "$R" "$(block "$LIVE")"
 rc=0; out="$(quar "$R")" || rc=$?
@@ -191,6 +219,20 @@ T="malformed block under --quarantine: exit 1"; check [ "$rc" = 1 ]
 T="malformed block under --quarantine: named"; check drift_has "$out" testQuarantine
 T="malformed block: command never ran"; refute [ -e "$R/ran-marker" ]
 T="malformed block under --quarantine: no traceback"; refute line_has "$out" Traceback
+
+rm -f "$R/ran-marker"
+qset "$R" '{"command": "touch ran-marker", "entries": [{"test": "suite::flaky", "expires": "2999-12-31", "runs": 3, "reason": "races the clock"}]}'
+rc=0; out="$(quar "$R")" || rc=$?
+T="run-count entry under --quarantine: exit 1"; check [ "$rc" = 1 ]
+T="run-count entry under --quarantine: named"; check drift_has "$out" runs
+T="run-count entry: command never ran"; refute [ -e "$R/ran-marker" ]
+
+rm -f "$R/ran-marker"
+qset "$R" '{"command": "touch ran-marker", "entries": [], "owner": "x"}'
+rc=0; out="$(quar "$R")" || rc=$?
+T="block key under --quarantine: exit 1"; check [ "$rc" = 1 ]
+T="block key under --quarantine: named"; check drift_has "$out" owner
+T="block key: command never ran"; refute [ -e "$R/ran-marker" ]
 
 # --- Requirement: no block declared ---
 qset "$R" DELETE
