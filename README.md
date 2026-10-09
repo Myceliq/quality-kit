@@ -242,6 +242,10 @@ edited on a branch inside a worktree does not take effect there.
   `{"command": "<shell>", "entries": [{"test": "<classname>::<name>", "expires": "YYYY-MM-DD", "reason": "..."}]}`.
   The static drift pass enforces the shape: a non-empty `command`, a real
   calendar date for every `expires`, a non-empty `reason`, one entry per test.
+  Unknown keys are refused: anything but `command`/`entries` on the block, or
+  `test`/`expires`/`reason` on an entry. The bound is date-only — run-count
+  bounds (`runs`, `maxRuns`, `runCount`) are not supported, because the check
+  runs once per invocation, keeps no state and cannot count runs.
   `check-drift.sh <repo> --quarantine` runs `command` through bash from the repo
   root with `QUALITY_KIT_JUNIT` set to a fresh path, and reads the JUnit XML it
   writes there (`<failure>`/`<error>` = failing, `<skipped>` = skipped). A

@@ -44,6 +44,8 @@ def check_shape(q):
     if not isinstance(q, dict):
         err("testQuarantine must be an object with command and entries — see quality-kit/README.md")
         return
+    for k in sorted(map(str, set(q) - {"command", "entries"})):
+        err(f"testQuarantine has unknown key {k!r} — only command and entries are allowed")
     cmd = q.get("command")
     if not isinstance(cmd, str) or not cmd.strip():
         err(f"testQuarantine.command must be a non-empty shell command that runs the tests and writes a JUnit XML report to $QUALITY_KIT_JUNIT (got {cmd!r})")
@@ -63,6 +65,13 @@ def check_shape(q):
         if test in seen:
             err(f"testQuarantine entry {test} is declared twice — keep one entry per test")
         seen.add(test)
+        for k in sorted(map(str, set(e) - {"test", "expires", "reason"})):
+            if k in ("runs", "maxRuns", "runCount"):
+                # the check runs once per invocation and keeps no state, so a
+                # run-count bound would read as enforced while never being counted
+                err(f"testQuarantine entry {test} has key {k!r}: run-count bounds are not supported — the check cannot count runs; bound it with an expires date instead")
+            else:
+                err(f"testQuarantine entry {test} has unknown key {k!r} — only test, expires and reason are allowed")
         if _date(e.get("expires")) is None:
             err(f"testQuarantine entry {test} needs expires as a real calendar date YYYY-MM-DD (got {e.get('expires')!r}) — every quarantine is bounded")
         reason = e.get("reason")
