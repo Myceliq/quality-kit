@@ -5,6 +5,11 @@
 #       command CI runs (tests.yml: toolchain install, then bash
 #       bin/selftest.sh), not a subset of it. `validate` is the target the
 #       engine asks for; this file exists so it has something to ask.
+#       The stamp's other factory key, `"test_convention": "shell"`, is read by
+#       the engine's bug lane (software-factory #922): a bare `make` runner means
+#       pytest there, and this repo's tests are `*.test.sh` suites, so without it
+#       no bug run here can name or select a regression test (#74). JSON holds no
+#       comments, so the reason lives here.
 # `validate-fast` is the same recipe, not a subset: the box's pre-commit hook and
 # the turn-end stop hook both invoke `make validate-fast` for a make-runner repo,
 # and the kit's own stamped python profile defines the two as identical lines
