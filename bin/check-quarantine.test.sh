@@ -56,6 +56,7 @@ qset "$R" "$(block "$LIVE")"
 rc=0; out="$(static "$R")" || rc=$?
 T="well-formed block: static gate exits 0"; check [ "$rc" = 0 ]
 T="well-formed block: static gate says clean"; check line_has "$out" "drift gate clean"
+T="well-formed block: no DRIFT line"; refute drift_has "$out"
 
 before="$(python3 -c "import json,sys;print(json.dumps(json.load(open(sys.argv[1]))['testQuarantine'],sort_keys=True))" "$R/.quality-kit.json")"
 bash "$DIR/stamp.sh" "$R" --profile nextjs >/dev/null
