@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# What: runs ts/validate-fast.test.sh itself, twice — once with no JS toolchain on PATH, once
-#       from a copy of the kit whose canonical JSONs carry the pre-change validate:fast.
-#       Where: quality-kit/ts.
-# Why:  that suite's two promises are about the suite, not the script (#45): it must stay green
+# What: runs ts/validate-fast.test.sh itself, three times — once with no JS toolchain on PATH,
+#       and once from each of two copies of the kit whose canonical JSONs carry an earlier
+#       validate:fast. Where: quality-kit/ts.
+# Why:  that suite's promises are about the suite, not the script (#45): it must stay green
 #       (never SKIP) on a box with no node/npm/vitest, and it must go red against the old
-#       `vitest run --changed` line. Neither is visible from inside it — the selftest gate runs it
+#       `vitest run --changed` line and against 0.5.6's `git status` guard, which refused a clean
+#       tree before vitest could collect anything (#80). None is visible from inside it — the selftest gate runs it
 #       with the caller's PATH, which has the node that installed ci/oxlint-toolchain, and against
 #       the current JSONs. Separate file, not a case in that suite, so nothing re-enters itself.
 set -euo pipefail
@@ -15,6 +16,8 @@ ok()  { echo "PASS $1"; }
 bad() { echo "FAIL $1: $2"; fail=1; }
 
 OLD='npm run format:check && npm run lint && npm run typecheck && vitest run --changed'
+# 0.5.6's script, verbatim: the clean-tree decision is taken from `git status`, ahead of vitest.
+GUARD='npm run format:check && npm run lint && npm run typecheck && changed=$(git status --porcelain --untracked-files=all) && { if [ -z "$changed" ]; then echo '"'"'validate:fast: no tests collected - the working tree is clean, so vitest run --changed selects nothing. Run npm run validate for the full suite, or vitest run --changed <ref> for the commits since <ref>.'"'"' >&2; exit 1; fi; vitest run --changed; }'
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 
@@ -46,10 +49,12 @@ else
     || bad "validate-fast suite runs without a JS toolchain" "rc=$rc out=$out"
 fi
 
-# --- pre-change script: a kit copy with the old validate:fast in all three profiles goes red ---
+# --- earlier scripts: a kit copy with one in all three profiles goes red, on the case it broke ---
 # The copy keeps bin/, hooks/, ts/, agents/ and VERSION: the suite runs stamp.sh, check-drift.sh
 # and stop-validate.sh relative to its own location.
-if python3 - "$KITROOT" "$T/kit" "$OLD" <<'EOF'
+red_against() { # $1=name $2=script $3=the FAIL line that script must produce
+  local kit; kit="$(mktemp -d "$T/kit.XXXXXX")/kit"
+  if python3 - "$KITROOT" "$kit" "$2" <<'EOF'
 import json, shutil, sys
 src, dst, old = sys.argv[1:]
 shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns(".git", "node_modules"))
@@ -61,15 +66,17 @@ for p in ("node", "nextjs", "vite"):
         json.dump(s, h, indent=2)
         h.write("\n")
 EOF
-then
-  set +e; out=$(bash "$T/kit/ts/validate-fast.test.sh" 2>&1); rc=$?; set -e
-  # The clean-tree FAIL, not just any: a broken copy (no stamp.sh, say) also fails, but not there.
-  [ "$rc" != 0 ] && printf '%s\n' "$out" | grep -q '^FAIL' \
-    && printf '%s\n' "$out" | grep -q '^FAIL .*clean tree fails loudly' \
-    && ok "validate-fast suite goes red against the pre-change script" \
-    || bad "validate-fast suite goes red against the pre-change script" "rc=$rc out=$out"
-else
-  bad "validate-fast suite goes red against the pre-change script" "kit copy was not built"
-fi
+  then
+    set +e; out=$(bash "$kit/ts/validate-fast.test.sh" 2>&1); rc=$?; set -e
+    # The named FAIL, not just any: a broken copy (no stamp.sh, say) also fails, but not there.
+    [ "$rc" != 0 ] && printf '%s\n' "$out" | grep -q "^FAIL .*$3" \
+      && ok "validate-fast suite goes red against $1" \
+      || bad "validate-fast suite goes red against $1" "rc=$rc out=$out"
+  else
+    bad "validate-fast suite goes red against $1" "kit copy was not built"
+  fi
+}
+red_against "the pre-change script" "$OLD" 'clean tree fails loudly'
+red_against "the 0.5.6 git-status guard" "$GUARD" 'runs the tests a base-ref config selects'
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

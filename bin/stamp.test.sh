@@ -64,6 +64,15 @@ assert ts['extends']=='./tsconfig.quality.json'
 grep -q 'quality-kit:begin' "$R/AGENTS.md" && grep -q '# Fixture' "$R/AGENTS.md" \
   && ok "AGENTS.md section appended, original kept" || bad "AGENTS.md section" "marker or original missing"
 
+# #80: the stamped block NAMES the suppression families and never spells a directive. A consumer's
+# suppression sweep greps all of HEAD for these exact tokens, prose included, so a block that
+# quotes them is counted as five un-gated suppressions in every stamped repo's AGENTS.md.
+block="$(sed -n '/<!-- quality-kit:begin -->/,/<!-- quality-kit:end -->/p' "$R/AGENTS.md")"
+hits="$(printf '%s\n' "$block" | grep -nF -e 'oxlint-disable' -e '@ts-expect-error' -e '@ts-ignore' -e 'noqa' -e 'type: ignore' || true)"
+[ "$(printf '%s\n' "$block" | wc -l)" -gt 10 ] && printf '%s\n' "$block" | grep -q 'Never add lint/type suppressions' && [ -z "$hits" ] \
+  && ok "stamped AGENTS.md block spells no suppression directive" \
+  || bad "stamped AGENTS.md block spells no suppression directive" "${hits:-block or its suppression rule is missing}"
+
 # tsconfig extends chain: pre-existing extends preserved, not clobbered
 # (TS 5+ array form, quality fragment appended last so its strict flags govern)
 E="$(mktemp -d)"
@@ -589,5 +598,41 @@ import json
 s=open('$JP/tsconfig.json').read()
 assert s==json.dumps({'compilerOptions':{'strict':True},'extends':'./tsconfig.quality.json'},indent=2)+'\n', s
 " && ok "plain tsconfig: json rewrite as before" || bad "plain tsconfig: json rewrite as before" "$(cat "$JP/tsconfig.json")"
+
+# #80: a kit pin is a floor. A repo AHEAD of the pin keeps its version (the stamper never writes the
+# lockfile, so a downgrade can never pass `npm ci`); behind, missing or not an exact version, it gets
+# the pin. The versions are derived from ts/pins.json, so the case survives the next pin bump.
+PN="$(mktemp -d)"
+python3 - "$DIR/../ts/pins.json" "$PN" <<'PY'
+import json, sys
+pins = json.load(open(sys.argv[1]))
+ahead = lambda v: ".".join(v.split(".")[:-1] + [str(int(v.split(".")[-1]) + 1)])
+dd = {
+    "vitest": ahead(pins["vitest"]),   # one patch ahead: must survive
+    "oxlint": "0.0.1",                 # behind: raised
+    # behind numerically, AHEAD as a string ("9" > "5"): raised only by a numeric compare
+    "oxfmt": "0.9.0",
+    "typescript": "^99",               # a range is not an exact version: pinned
+    "ultracite": ahead(pins["ultracite"]) + ".1",  # ahead but not X.Y.Z, so npm cannot install it: pinned
+}
+assert tuple(map(int, pins["oxfmt"].split("."))) > (0, 9, 0) and pins["oxfmt"] < "0.9.0", pins["oxfmt"]
+json.dump({"name": "fix", "scripts": {"build": "next build"}, "devDependencies": dd}, open(sys.argv[2] + "/package.json", "w"))
+json.dump(dd, open(sys.argv[2] + "/before.json", "w"))
+PY
+(cd "$PN" && git init -q && git config core.hooksPath /dev/null && printf '{}' > tsconfig.json)
+if bash "$S" "$PN" --profile nextjs >/dev/null 2>&1 && msg="$(python3 - "$DIR/../ts/pins.json" "$PN" <<'PY'
+import json, sys
+pins = json.load(open(sys.argv[1]))
+before = json.load(open(sys.argv[2] + "/before.json"))
+got = json.load(open(sys.argv[2] + "/package.json"))["devDependencies"]
+want = dict(pins, vitest=before["vitest"])
+print({k: (got.get(k), want[k]) for k in want if got.get(k) != want[k]})
+sys.exit(got != want)
+PY
+)"; then
+  ok "a devDependency ahead of the kit pin survives; behind, missing or a range is pinned"
+else
+  bad "a devDependency ahead of the kit pin survives; behind, missing or a range is pinned" "${msg:-stamp failed}"
+fi
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
