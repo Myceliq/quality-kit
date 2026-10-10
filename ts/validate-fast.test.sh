@@ -5,7 +5,10 @@
 # Why:  `vitest run --changed` with no ref selects only UNCOMMITTED changes, so on a clean tree it
 #       collects zero tests, prints `No test files found, exiting with code 0` and exits 0 — a
 #       green validate:fast that tested nothing (#45). The script must fail loudly there and keep
-#       today's behavior whenever the tree is dirty. Stand-ins, not the real toolchain: the
+#       today's behavior whenever the tree is dirty. It must decide that from what vitest
+#       COLLECTED, never from `git status` alone (#80): a repo whose vitest config resolves changed
+#       files against a base ref has tests to run on a clean tree, and a guard that exits before
+#       vitest starts runs none of them. Stand-ins, not the real toolchain: the
 #       failure mode is vitest's zero-collection exit status, which a stand-in reproduces
 #       exactly, and the suite then runs (and can never SKIP) on a box with no node at all.
 set -euo pipefail
@@ -32,8 +35,10 @@ case "$*" in
 esac
 exit 97
 EOF
-# vitest stand-in, modelled on vitest 4.1.10: with no uncommitted path under src/, `run --changed`
+# vitest stand-in, modelled on vitest 4.1.11: with no uncommitted path under src/, `run --changed`
 # collects nothing, says so, and exits 0; otherwise it prints FAKE_VITEST_OUT, exits FAKE_VITEST_RC.
+# FAKE_VITEST_BASE=<ref> models a config whose experimental.vcsProvider adds the files committed
+# since <ref> (`<ref>...HEAD`) to the uncommitted ones (#80).
 cat >"$T/bin/vitest" <<'EOF'
 #!/usr/bin/env bash
 echo "$*" >> "$VITEST_LOG"
@@ -41,7 +46,9 @@ if [ -n "$FAKE_VITEST_ZERO" ]; then
   echo "No test files found, exiting with code 0"
   exit 0
 fi
-if [ -n "$(git status --porcelain --untracked-files=all -- src/)" ]; then
+changed="$(git status --porcelain --untracked-files=all -- src/)"
+[ -z "$FAKE_VITEST_BASE" ] || changed="$changed$(git diff --name-only "$FAKE_VITEST_BASE...HEAD" -- src/)"
+if [ -n "$changed" ]; then
   printf '%s\n' "${FAKE_VITEST_OUT:-✓ src/sum.test.ts (1 test)}"
   exit "${FAKE_VITEST_RC:-0}"
 fi
@@ -74,6 +81,11 @@ run_fast() { # $1=repo $2=script [VAR=value...] → out, rc; the stand-in logs s
   set +e; out=$(cd "$1" && env "${@:3}" /bin/sh -c "$2" 2>&1); rc=$?; set -e
 }
 edit_sum() { printf 'export const two = 2;\n' >> "$1/src/sum.ts"; }
+commit_sum() { # $1=repo → tags the fixture commit `base`, then COMMITS an edit to src/sum.ts: clean tree, one commit ahead
+  git -C "$1" tag base && edit_sum "$1" && git -C "$1" -c user.name=t -c user.email=t@t commit -q -am edit \
+    && [ -z "$(git -C "$1" status --porcelain --untracked-files=all)" ] \
+    || { echo "FAIL fixture repo: the committed edit was not built"; exit 1; }
+}
 has()   { printf '%s\n' "$out" | grep -qF -- "$1"; }
 no_tc() { ! printf '%s\n' "$out" | grep -qi 'no tests collected'; }
 
@@ -125,6 +137,24 @@ for p in "${PROFILES[@]}"; do
   [ "$rc" = 0 ] && has 'No test files found, exiting with code 0' && no_tc \
     && ok "$p: an uncommitted source edit that collects zero tests keeps today's --changed behavior" \
     || bad "$p: an uncommitted source edit that collects zero tests keeps today's --changed behavior" "rc=$rc out=$out"
+
+  # #80: the tree is clean and the change is COMMITTED. With the stock provider vitest collects
+  # nothing, and that is still the loud failure; with a base-ref config it has tests to run, and
+  # the script must run them and exit with vitest's status, whatever `git status` says.
+  fixture R; commit_sum "$R"; run_fast "$R" "$FAST"
+  [ "$rc" != 0 ] && ! no_tc && [ "$(cat "$VITEST_LOG")" = 'run --changed' ] \
+    && ok "$p: committed change on a clean tree with the stock provider fails on vitest's zero collection" \
+    || bad "$p: committed change on a clean tree with the stock provider fails on vitest's zero collection" "rc=$rc vitest=$(cat "$VITEST_LOG") out=$out"
+
+  fixture R; commit_sum "$R"; run_fast "$R" "$FAST" FAKE_VITEST_BASE=base
+  [ "$rc" = 0 ] && has '✓ src/sum.test.ts (1 test)' && no_tc \
+    && ok "$p: committed change on a clean tree runs the tests a base-ref config selects" \
+    || bad "$p: committed change on a clean tree runs the tests a base-ref config selects" "rc=$rc out=$out"
+
+  fixture R; commit_sum "$R"; run_fast "$R" "$FAST" FAKE_VITEST_BASE=base FAKE_VITEST_OUT='FAIL src/sum.test.ts' FAKE_VITEST_RC=1
+  [ "$rc" = 1 ] && has 'FAIL src/sum.test.ts' && no_tc \
+    && ok "$p: a base-ref run on a clean tree exits with vitest's status" \
+    || bad "$p: a base-ref run on a clean tree exits with vitest's status" "rc=$rc out=$out"
 done
 
 # --- the three canonical JSONs: validate:fast agrees, every other key is as at eb55a39 ---

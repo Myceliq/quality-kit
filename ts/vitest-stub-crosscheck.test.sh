@@ -4,7 +4,7 @@
 #       from the fixture root — requiring the same exit code and output class from each.
 #       Where: quality-kit/ts.
 # Why:  ts/validate-fast.test.sh certifies the validate:fast script against a stand-in "modelled
-#       on vitest 4.1.10", and nothing checked the model (#72): a stand-in that drifts from the
+#       on vitest 4.1.11", and nothing checked the model (#72): a stand-in that drifts from the
 #       real binary keeps that suite green while the script it certifies is wrong. Expectations
 #       come from RUNNING the stand-in, extracted from that suite's heredoc, never from a copied
 #       table — editing a stand-in row changes what the real binary must match here.
@@ -69,7 +69,7 @@ edit_sum() { printf 'export const two = 2;\n' >> "$1/src/sum.ts"; }
 classify() { # $1=combined output → zero-collection | tests-ran | nothing (unclassifiable never matches)
   if printf '%s\n' "$1" | grep -qF 'No test files found, exiting with code 0'; then echo zero-collection
   elif printf '%s\n' "$1" | grep -qF '.test.ts'; then echo tests-ran
-  # Real vitest 4.1.10's passing summary names no file (`Test Files  1 passed (1)`), while the
+  # Real vitest 4.1.11's passing summary names no file (`Test Files  1 passed (1)`), while the
   # stub's canned output always does — so this arm only ever fires on the real side.
   elif printf '%s\n' "$1" | grep -qE 'Test Files +[0-9]+ passed'; then echo tests-ran
   fi
@@ -78,7 +78,7 @@ indent() { printf '%s\n' "$1" | sed 's/^/    | /'; }
 row() { # $1=name $2=repo [VAR=value...]=stand-in knobs → one PASS/FAIL line for the row
   local s_out s_rc r_out r_rc s_cls r_cls
   set +e
-  s_out=$(cd "$2" && env -u FAKE_VITEST_ZERO -u FAKE_VITEST_OUT -u FAKE_VITEST_RC VITEST_LOG="$T/stub.log" "${@:3}" "$T/stub" run --changed 2>&1); s_rc=$?
+  s_out=$(cd "$2" && env -u FAKE_VITEST_ZERO -u FAKE_VITEST_OUT -u FAKE_VITEST_RC -u FAKE_VITEST_BASE VITEST_LOG="$T/stub.log" "${@:3}" "$T/stub" run --changed 2>&1); s_rc=$?
   r_out=$(cd "$2" && env -u FAKE_VITEST_ZERO -u FAKE_VITEST_OUT -u FAKE_VITEST_RC TMPDIR="$T/tmp" "$REAL" run --changed 2>&1); r_rc=$?
   set -e
   s_cls="$(classify "$s_out")"; r_cls="$(classify "$r_out")"
@@ -117,5 +117,40 @@ row "uncovered source edit" "$R" FAKE_VITEST_ZERO=1
 fixture R
 printf 'import { expect, it } from "vitest";\nimport { sum } from "./sum";\nit("sums again", () => expect(sum(1, 2)).toBe(3));\n' > "$R/src/sum2.test.ts"
 row "untracked test file" "$R"
+
+# #80: the stand-in's FAKE_VITEST_BASE knob against the thing it models — a real config whose
+# experimental.vcsProvider adds the files committed since a base ref. Committed change, clean tree.
+fixture R
+cat > "$R/vitest.config.mjs" <<'EOF'
+import { execFileSync } from "node:child_process";
+const git = (root, args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).split("\n").filter(Boolean);
+export default {
+  test: {
+    experimental: {
+      vcsProvider: {
+        findChangedFiles: ({ root }) =>
+          Promise.resolve([
+            ...git(root, ["diff", "--name-only", "base...HEAD"]),
+            ...git(root, ["diff", "--cached", "--name-only"]),
+            ...git(root, ["ls-files", "--other", "--modified", "--exclude-standard"]),
+          ]),
+      },
+    },
+  },
+};
+EOF
+if (cd "$R" && git add vitest.config.mjs && git -c user.name=t -c user.email=t@t commit -q -m config && git tag base \
+    && edit_sum "$R" && git -c user.name=t -c user.email=t@t commit -q -am edit) \
+    && [ -z "$(git -C "$R" status --porcelain --untracked-files=all)" ]; then
+  row "committed change, clean tree, base-ref config" "$R" FAKE_VITEST_BASE=base
+  # The armed control: the same repo state WITHOUT the knob is the stock provider, which the
+  # config above must NOT behave like — so the row above is the config's doing, not the fixture's.
+  set +e; s_out=$(cd "$R" && env -u FAKE_VITEST_BASE VITEST_LOG="$T/stub.log" "$T/stub" run --changed 2>&1); set -e
+  [ "$(classify "$s_out")" = zero-collection ] \
+    && ok "committed change, clean tree: the stub without the base-ref knob collects nothing" \
+    || bad "committed change, clean tree: the stub without the base-ref knob collects nothing" "$s_out"
+else
+  bad "committed change, clean tree, base-ref config" "fixture: the committed edit was not built"
+fi
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

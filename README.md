@@ -393,6 +393,20 @@ stamp PR — most of them BLOCK a green stamp.
   lower bounds in one branch — is **refused, not guessed at**, with a message
   naming what to write instead. A range whose bounds admit no Node at all
   (`>=22.12.0 <22.12.0`) is reported as unsatisfiable.
+- **A tool pin is a floor too: a re-stamp never downgrades a `devDependencies`
+  version.** `stamp.sh` writes `ts/pins.json` into `package.json` and never
+  touches the lockfile, so lowering a version would leave the two out of sync
+  and `npm ci` would refuse the tree. A repo on a HIGHER exact version than the
+  kit's pin keeps it (#80: booking-platform's `vitest` bump for an advisory);
+  a lower or missing one, or anything that is not an exact version (a range, a
+  tag), is set to the pin. After a stamp that raises a pin, refresh the lockfile.
+- **`validate:fast` fails on a clean tree only when vitest collected nothing.**
+  `vitest run --changed` with no ref selects uncommitted changes, so on a clean
+  tree it reports `No test files found` and exits 0; the script turns that into
+  a failure. It reads vitest's own report, never `git status` alone: a repo
+  whose vitest config resolves changed files against a base ref
+  (`experimental.vcsProvider`) has tests to run after a commit, and they run.
+  With uncommitted changes, zero collected tests still passes (a docs-only edit).
 - **A stamped repo must have at least one test file, and the drift gate enforces
   it.** `test:unit` is in the canonical `validate` chain, and both runners treat
   an empty collection as a failure — `vitest run` exits 1, `pytest` exits 5 and

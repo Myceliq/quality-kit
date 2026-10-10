@@ -5,5 +5,5 @@
   "typecheck": "tsc --noEmit",
   "test:unit": "vitest run",
   "validate": "npm run format:check && npm run lint && npm run typecheck && npm run test:unit && npm run validate:repo --if-present && npm run build",
-  "validate:fast": "npm run format:check && npm run lint && npm run typecheck && changed=$(git status --porcelain --untracked-files=all) && { if [ -z \"$changed\" ]; then echo 'validate:fast: no tests collected - the working tree is clean, so vitest run --changed selects nothing. Run npm run validate for the full suite, or vitest run --changed <ref> for the commits since <ref>.' >&2; exit 1; fi; vitest run --changed; }"
+  "validate:fast": "npm run format:check && npm run lint && npm run typecheck && { out=$(vitest run --changed 2>&1); rc=$?; printf '%s\\n' \"$out\"; if [ \"$rc\" = 0 ] && printf '%s\\n' \"$out\" | grep -q 'No test files found' && [ -z \"$(git status --porcelain --untracked-files=all)\" ]; then echo 'validate:fast: no tests collected - vitest run --changed found no test files and the working tree is clean, so nothing was tested. Run npm run validate for the full suite, or vitest run --changed <ref> for the commits since <ref>.' >&2; exit 1; fi; exit \"$rc\"; }"
 }

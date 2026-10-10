@@ -268,7 +268,7 @@ fi
 
 # python3 stdlib merges for shared files
 python3 - "$KIT" "$REPO" "$PROFILE" "$VERSION" "$RUNNER" <<'PY'
-import json, os, sys
+import json, os, re, sys
 kit, repo, profile, version, runner = sys.argv[1:6]
 j = lambda p: json.load(open(p)) if os.path.exists(p) else {}
 def w(p, d): open(p, "w").write(json.dumps(d, indent=2) + "\n")
@@ -302,7 +302,23 @@ if profile != "python":
     pkg = j(pkg_path) or {"name": os.path.basename(repo), "private": True}
     pkg.setdefault("scripts", {}).update(j(os.path.join(kit, f"ts/package-scripts.{profile}.json")))
     dd = pkg.setdefault("devDependencies", {})
-    dd.update(j(os.path.join(kit, "ts/pins.json")))
+    # A kit pin is a FLOOR (#80): a repo already on a HIGHER exact version keeps
+    # it. The stamper writes package.json and never the lockfile, so lowering a
+    # pin leaves the two out of sync and `npm ci` refuses the tree — in the
+    # pre-commit hook and in CI — and it can undo a bump the repo made to clear
+    # an advisory (booking-platform's vitest 4.1.11 against a kit pin of
+    # 4.1.10). check-drift.sh does not compare these values, so nothing needs
+    # the downgrade. Compared numerically, field by field: as strings "4.1.9"
+    # sorts above "4.1.10". Only an exact dotted version can be ahead; a range,
+    # a tag or anything else unparseable is replaced by the pin, as before.
+    def exact(v):
+        if isinstance(v, str) and re.fullmatch(r"\d+(\.\d+)*", v):
+            return tuple(int(n) for n in v.split("."))
+        return None
+    for name, pin in j(os.path.join(kit, "ts/pins.json")).items():
+        have, want = exact(dd.get(name)), exact(pin)
+        if not (have and want and have > want):
+            dd[name] = pin
     # engines: the pinned toolchain floors Node at 22.12.0 (ultracite pulls
     # commander@15 at a flat >=22.12.0), and check-drift.sh now enforces that
     # floor — so the stamper writes it, or every fresh stamp would fail the
