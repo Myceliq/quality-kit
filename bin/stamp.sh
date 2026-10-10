@@ -313,7 +313,7 @@ if profile != "python":
     # a prerelease or a malformed version ("4.1.11.1", which npm cannot
     # install) is replaced by the pin, as before.
     def exact(v):
-        if isinstance(v, str) and re.fullmatch(r"\d+\.\d+\.\d+", v):
+        if isinstance(v, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v):
             return tuple(int(n) for n in v.split("."))
         return None
     for name, pin in j(os.path.join(kit, "ts/pins.json")).items():
