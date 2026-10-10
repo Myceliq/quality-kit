@@ -155,6 +155,12 @@ for p in "${PROFILES[@]}"; do
   [ "$rc" = 1 ] && has 'FAIL src/sum.test.ts' && no_tc \
     && ok "$p: a base-ref run on a clean tree exits with vitest's status" \
     || bad "$p: a base-ref run on a clean tree exits with vitest's status" "rc=$rc out=$out"
+
+  # Zero collection is vitest's own line, whole: a passing test that prints the phrase is not it.
+  fixture R; commit_sum "$R"; run_fast "$R" "$FAST" FAKE_VITEST_BASE=base FAKE_VITEST_OUT='stdout | src/sum.test.ts: saw No test files found, exiting with code 0 in a log'
+  [ "$rc" = 0 ] && no_tc \
+    && ok "$p: a passing run whose output mentions the zero-collection phrase still passes" \
+    || bad "$p: a passing run whose output mentions the zero-collection phrase still passes" "rc=$rc out=$out"
 done
 
 # --- the three canonical JSONs: validate:fast agrees, every other key is as at eb55a39 ---

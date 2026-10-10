@@ -613,6 +613,7 @@ dd = {
     # behind numerically, AHEAD as a string ("9" > "5"): raised only by a numeric compare
     "oxfmt": "0.9.0",
     "typescript": "^99",               # a range is not an exact version: pinned
+    "ultracite": ahead(pins["ultracite"]) + ".1",  # ahead but not X.Y.Z, so npm cannot install it: pinned
 }
 assert tuple(map(int, pins["oxfmt"].split("."))) > (0, 9, 0) and pins["oxfmt"] < "0.9.0", pins["oxfmt"]
 json.dump({"name": "fix", "scripts": {"build": "next build"}, "devDependencies": dd}, open(sys.argv[2] + "/package.json", "w"))

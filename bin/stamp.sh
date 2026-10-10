@@ -309,10 +309,11 @@ if profile != "python":
     # an advisory (booking-platform's vitest 4.1.11 against a kit pin of
     # 4.1.10). check-drift.sh does not compare these values, so nothing needs
     # the downgrade. Compared numerically, field by field: as strings "4.1.9"
-    # sorts above "4.1.10". Only an exact dotted version can be ahead; a range,
-    # a tag or anything else unparseable is replaced by the pin, as before.
+    # sorts above "4.1.10". Only an exact X.Y.Z can be ahead; a range, a tag,
+    # a prerelease or a malformed version ("4.1.11.1", which npm cannot
+    # install) is replaced by the pin, as before.
     def exact(v):
-        if isinstance(v, str) and re.fullmatch(r"\d+(\.\d+)*", v):
+        if isinstance(v, str) and re.fullmatch(r"\d+\.\d+\.\d+", v):
             return tuple(int(n) for n in v.split("."))
         return None
     for name, pin in j(os.path.join(kit, "ts/pins.json")).items():
