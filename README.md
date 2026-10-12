@@ -148,6 +148,22 @@ silently overrides the global one, and git skips a hooks directory with no
 gated one. It reports `OK` / `STALE` / `GATE-OFF` / `ORPHAN` per repo and exits
 non-zero if any live repo is ungated.
 
+## What the turn-end gate validates (`.quality/stop-validate.sh`)
+
+The `Stop` hook runs the repo's `validate:fast` (`make validate-fast` for a
+`make` runner) when the working tree has a non-docs change, and blocks the turn
+on a red result. The tree it validates is the one the session stands in, taken
+from the `cwd` field of the hook payload, so a session in a linked worktree is
+judged on its own tree and not on whatever is dirty in the primary checkout.
+
+It validates **only the project it is stamped into**: that project's primary
+checkout and its linked worktrees. A tree counts as the project's when its
+`git rev-parse --git-common-dir`, resolved to a physical absolute path, equals
+that of the directory the script itself is installed in. When the session
+stands anywhere else — another repository, another clone of this one, a
+submodule — the hook exits 0 and runs nothing. A payload with no usable `cwd`
+falls back to the hook process's own cwd, under the same rule.
+
 ## The stamped Codex hooks (`.codex/hooks.json`)
 
 The stamp writes `.codex/hooks.json` — a `PostToolUse` formatter and a `Stop`

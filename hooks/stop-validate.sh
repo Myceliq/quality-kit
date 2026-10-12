@@ -11,9 +11,8 @@ payload="$(cat 2>/dev/null || true)"
 # Resolve the repo from the SESSION'S cwd, not the hook process's own.
 #
 # Both runtimes launch a Stop hook with cwd set to the PROJECT dir, which is not necessarily the
-# tree the session edited: a session working in a linked worktree — or in a different repo
-# entirely — would otherwise have the project dir validated, and every dirty file there
-# attributed to it. On a box where several sessions share one primary checkout, that makes a
+# tree the session edited: a session working in a linked worktree would otherwise have the
+# project dir validated, and every dirty file there attributed to it. On a box where several sessions share one primary checkout, that makes a
 # peer's in-flight work block a session that never opened those files, and the message it prints
 # ("fix before ending the turn") tells that session to fix work it does not own. Reproduced:
 # a clean session worktree, a project dir carrying an unrelated session's broken untracked file,
@@ -30,6 +29,25 @@ if [ -n "$session_cwd" ] && [ -d "$session_cwd" ]; then
 fi
 [ -n "$root" ] || root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ -n "$root" ] || exit 0
+
+# ...but only this project's own trees. The session's cwd can be any directory, including a clone
+# of some other repository; this hook belongs to the project it is stamped into and validates
+# that project's primary checkout and linked worktrees, nothing else. A tree belongs to the
+# project when it shares its git common dir with the directory this script is installed in. The
+# anchor is the script's location and not the process cwd, because the runtime's config names
+# this file by path while the cwd it launches hooks from is the runtime's choice. Both sides are
+# resolved to a physical absolute path first: `--git-common-dir` prints `.git` for a primary
+# checkout and an absolute path for a worktree, and either may sit behind a symlink.
+# Any other tree, a submodule included (its common dir is its own), exits 0 untouched.
+common_dir() { # $1=dir inside a work tree → physical absolute path of its git common dir
+  local g; g="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  [ -n "$g" ] || return 1
+  (cd "$1" && cd "$g" && pwd -P) 2>/dev/null
+}
+own="$(common_dir "$(dirname "${BASH_SOURCE[0]}")")" || exit 0
+theirs="$(common_dir "$root")" || exit 0
+[ -n "$own" ] && [ "$own" = "$theirs" ] || exit 0
+
 cd "$root" || exit 0
 [ -f .quality-kit.json ] || exit 0
 

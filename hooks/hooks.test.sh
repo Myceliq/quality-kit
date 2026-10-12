@@ -40,10 +40,14 @@ printf '{"no":"path"}' | bash "$DIR/format-changed-adapter.sh" && ok "adapter no
 SV="$DIR/stop-validate.sh"
 mk_repo() { # $1=fail(0|1) → fixture git repo whose validate-fast exits $1; any failed step → rc 1, no path
   # Checked explicitly: callers run this inside $( ), where set -e does not reach.
+  # The hook is installed where the stamp puts it, .quality/stop-validate.sh, and run from there:
+  # it validates only the project it is installed in. validate-fast leaves `validate-ran` behind,
+  # so an arm can tell "ran and passed" from "never ran".
   local r; r="$(mktemp -d)" || return 1
   (cd "$r" && git init -q && git config core.hooksPath /dev/null && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init) || return 1
   printf '{"version":"0.1.0","profile":"python","runner":"make","pendingFlags":[]}' > "$r/.quality-kit.json" || return 1
-  printf 'validate-fast:\n\t@exit %s\n' "$1" > "$r/Makefile" || return 1
+  printf 'validate-fast:\n\t@touch validate-ran; exit %s\n' "$1" > "$r/Makefile" || return 1
+  mkdir "$r/.quality" && cp "$SV" "$r/.quality/stop-validate.sh" || return 1
   (cd "$r" && git add -A && git -c user.name=t -c user.email=t@t commit -q -m fixture) || return 1
   [ "$(git -C "$r" rev-list --count HEAD 2>/dev/null)" = 2 ] || return 1
   echo "$r"
@@ -66,40 +70,61 @@ chmod +x "$T/nocommit/git"
 set +e; out=$(PATH="$T/nocommit:$PATH" mk_repo 0 2>/dev/null); rc=$?; set -e
 [ "$rc" != 0 ] && [ -z "$out" ] && ok "mk_repo fails closed on a refused commit" \
   || bad "mk_repo fails closed on a refused commit" "rc=$rc out=$out"
+H=.quality/stop-validate.sh
 fixture R 0
-(cd "$R" && echo '{}' | bash "$SV") && ok "clean tree allows stop" || bad "clean tree allows stop" "blocked"
-(cd "$R" && mkdir -p docs && echo x > docs/note.md && echo '{}' | bash "$SV") && ok "docs-only allows stop" || bad "docs-only allows stop" "blocked"
-(cd "$R" && echo x > code.ts && echo '{}' | bash "$SV") && ok "dirty+green allows stop" || bad "dirty+green allows stop" "blocked"
+(cd "$R" && echo '{}' | bash $H) && ok "clean tree allows stop" || bad "clean tree allows stop" "blocked"
+(cd "$R" && mkdir -p docs && echo x > docs/note.md && echo '{}' | bash $H) && ok "docs-only allows stop" || bad "docs-only allows stop" "blocked"
+(cd "$R" && echo x > code.ts && echo '{}' | bash $H) && [ -e "$R/validate-ran" ] \
+  && ok "dirty+green allows stop" || bad "dirty+green allows stop" "blocked, or validate-fast never ran"
 fixture RF 1
 (cd "$RF" && echo x > code.ts)
-set +e; err=$( (cd "$RF" && echo '{}' | bash "$SV") 2>&1 >/dev/null ); rc=$?; set -e
+set +e; err=$( (cd "$RF" && echo '{}' | bash $H) 2>&1 >/dev/null ); rc=$?; set -e
 [ "$rc" = 2 ] && echo "$err" | grep -q "validate:fast FAILED" && ok "dirty+red blocks with exit 2" || bad "dirty+red blocks with exit 2" "rc=$rc err=$err"
-set +e; (cd "$RF" && printf '{"stop_hook_active": true}' | bash "$SV" 2>/dev/null); rc=$?; set -e
+set +e; (cd "$RF" && printf '{"stop_hook_active": true}' | bash $H 2>/dev/null); rc=$?; set -e
 [ "$rc" = 0 ] && ok "stop_hook_active releases (no livelock)" || bad "stop_hook_active releases (no livelock)" "rc=$rc"
-(cd "$(mktemp -d)" && git init -q . && echo '{}' | bash "$SV") && ok "unstamped repo no-op" || bad "unstamped repo no-op" "blocked"
+U="$(mktemp -d)"
+(cd "$U" && git init -q . && mkdir .quality && cp "$SV" $H && echo '{}' | bash $H) && ok "unstamped repo no-op" || bad "unstamped repo no-op" "blocked"
 
-# The payload's cwd — not the hook's — picks the tree. A session working in one repo must not be
-# blocked by whatever happens to be dirty in the project dir the runtime launched the hook from,
-# which on a shared checkout is a peer session's in-flight work.
-fixture RCLEAN 0
-(cd "$RF" && echo x > code.ts)                       # project dir: dirty AND red
-(cd "$RCLEAN" && echo x > mine.ts)                   # session's own tree: dirty and green
-(cd "$RF" && printf '{"cwd":"%s"}' "$RCLEAN" | bash "$SV") \
-  && ok "payload cwd selects the session's own repo" \
-  || bad "payload cwd selects the session's own repo" \
-         "blocked on the project dir's tree instead of the session's"
+# The payload's cwd — not the hook's — picks the tree. A session working in a linked worktree must
+# not be blocked by whatever happens to be dirty in the project dir the runtime launched the hook
+# from, which on a shared checkout is a peer session's in-flight work.
+git -C "$RF" worktree add -q --detach "$T/wgreen"
+printf 'validate-fast:\n\t@touch validate-ran; exit 0\n' > "$T/wgreen/Makefile"   # dirty and green
+(cd "$RF" && printf '{"cwd":"%s"}' "$T/wgreen" | bash $H) && [ -e "$T/wgreen/validate-ran" ] \
+  && ok "payload cwd selects the session's own worktree" \
+  || bad "payload cwd selects the session's own worktree" \
+         "blocked on the project dir's tree, or the worktree was never validated"
 
-# ...and the reverse, so the above cannot pass by the gate simply going quiet.
-set +e; err=$( (cd "$RCLEAN" && printf '{"cwd":"%s"}' "$RF" | bash "$SV") 2>&1 >/dev/null ); rc=$?; set -e
-[ "$rc" = 2 ] && echo "$err" | grep -q "validate:fast FAILED" \
-  && ok "payload cwd still blocks when THAT tree is red" \
-  || bad "payload cwd still blocks when THAT tree is red" "rc=$rc err=$err"
+# The hook validates its own project and that project's linked worktrees, and no other repository.
+# One project P, clean, so nothing below is decided by its own tree. The two arms run the same
+# hook from the same cwd over trees with byte-identical fixtures (dirty, validate-fast writes
+# `validate-ran` and exits 1); they differ only in the payload's cwd.
+fixture P 1
+fixture OTHER 1
+git -C "$P" worktree add -q --detach "$T/wred"
+echo x > "$T/wred/code.ts"; echo x > "$OTHER/code.ts"
+stop_in() { set +e; err=$( (cd "$P" && printf '{"cwd":"%s"}' "$1" | bash $H) 2>&1 >/dev/null ); rc=$?; set -e; }
+stop_in "$T/wred"
+[ "$rc" = 2 ] && echo "$err" | grep -q "validate:fast FAILED" && [ -e "$T/wred/validate-ran" ] \
+  && ok "payload cwd in a linked worktree of the project still blocks when red" \
+  || bad "payload cwd in a linked worktree of the project still blocks when red" "rc=$rc err=$err"
+stop_in "$OTHER"
+[ "$rc" = 0 ] && [ ! -e "$OTHER/validate-ran" ] \
+  && ok "payload cwd in another repository is not validated" \
+  || bad "payload cwd in another repository is not validated" \
+         "rc=$rc validate-ran=$([ -e "$OTHER/validate-ran" ] && echo present || echo absent)"
+# The same worktree reached through a symlink is still the project's.
+rm -f "$T/wred/validate-ran"; ln -s "$T/wred" "$T/wlink"
+stop_in "$T/wlink"
+[ "$rc" = 2 ] && [ -e "$T/wred/validate-ran" ] \
+  && ok "a symlinked path to the project's worktree is still validated" \
+  || bad "a symlinked path to the project's worktree is still validated" "rc=$rc err=$err"
 
 # A cwd that is absent, empty or gone falls back to the hook's own cwd — never silently skips.
-set +e; (cd "$RF" && printf '{"cwd":"/nonexistent/%s"}' "$$" | bash "$SV" 2>/dev/null); rc=$?; set -e
+set +e; (cd "$RF" && printf '{"cwd":"/nonexistent/%s"}' "$$" | bash $H 2>/dev/null); rc=$?; set -e
 [ "$rc" = 2 ] && ok "missing cwd falls back to the hook's cwd" \
   || bad "missing cwd falls back to the hook's cwd" "rc=$rc (a skipped gate, not a pass)"
-set +e; (cd "$RF" && printf '{"cwd":""}' | bash "$SV" 2>/dev/null); rc=$?; set -e
+set +e; (cd "$RF" && printf '{"cwd":""}' | bash $H 2>/dev/null); rc=$?; set -e
 [ "$rc" = 2 ] && ok "empty cwd falls back to the hook's cwd" \
   || bad "empty cwd falls back to the hook's cwd" "rc=$rc (a skipped gate, not a pass)"
 
