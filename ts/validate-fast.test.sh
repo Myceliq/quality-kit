@@ -223,10 +223,11 @@ drift "$R"
 # --- stop hook: a clean stamped npm repo releases the stop without running validate:fast ---
 R="$(mktemp -d "$T/sv.XXXXXX")"
 (cd "$R" && git init -q && git config core.hooksPath /dev/null && printf '{"runner": "npm"}' > .quality-kit.json \
+  && mkdir .quality && cp "$KITROOT/hooks/stop-validate.sh" .quality/stop-validate.sh \
   && git add -A && git -c user.name=t -c user.email=t@t commit -q -m init) \
   || { echo "FAIL stop-hook fixture repo was not built"; exit 1; }
 : > "$NPM_LOG"
-set +e; (cd "$R" && echo '{}' | bash "$KITROOT/hooks/stop-validate.sh" >/dev/null 2>&1); rc=$?; set -e
+set +e; (cd "$R" && echo '{}' | bash .quality/stop-validate.sh >/dev/null 2>&1); rc=$?; set -e
 [ "$rc" = 0 ] && [ ! -s "$NPM_LOG" ] \
   && ok "clean stamped repo releases the stop without running npm" \
   || bad "clean stamped repo releases the stop without running npm" "rc=$rc npm=$(cat "$NPM_LOG")"
