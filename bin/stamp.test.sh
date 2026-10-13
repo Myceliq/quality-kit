@@ -37,7 +37,7 @@ done
 echo "$first_out" | grep -q "hooks/codex-stop.sh, OFF until it is installed and approved once per machine, and it runs only in projects Codex trusts" \
   && ok "stamp names the Codex gate's activation conditions" \
   || bad "stamp names the Codex gate's activation conditions" "$first_out"
-echo "$first_out" | grep -Fq 'does not read or write $CODEX_HOME/config.toml or hooks.json, default ~/.codex' \
+echo "$first_out" | grep -Fq 'does not read or write $CODEX_HOME/hooks.json and does not write config.toml, default ~/.codex' \
   && ok "stamp states the kit does not install the hook or grant trust itself" \
   || bad "stamp states the kit does not install the hook or grant trust itself" "$first_out"
 

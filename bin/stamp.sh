@@ -555,4 +555,4 @@ echo "→ Codex turn-end gate: NOT stamped — it is the user-level hook hooks/c
 # The boundary belongs in the OUTPUT, not only in this comment: an operator told
 # a control is off will look for the switch, and needs to know the kit did not
 # flip it for them and will not.
-echo "  (the kit does not read or write "'$CODEX_HOME'"/config.toml or hooks.json, default ~/.codex — installing the hook and granting trust are yours to do)"
+echo "  (the kit does not read or write "'$CODEX_HOME'"/hooks.json and does not write config.toml, default ~/.codex — installing the hook and granting trust are yours to do)"
