@@ -245,7 +245,8 @@ exit status and stderr passed through.
 Earlier kits stamped `.codex/hooks.json` with a `Stop` and a `PostToolUse`
 entry. Re-stamping removes that file (the previous stamp's manifest lists it; a
 hooks file the repo added itself is left alone), and `check-drift.sh` reports a
-`.codex/hooks.json` that still runs a `.quality/` script. The `PostToolUse`
+`.codex/hooks.json` that still runs `.quality/stop-validate.sh` or
+`.quality/format-changed-adapter.sh`. The `PostToolUse`
 formatter entry is gone without a replacement: Codex's `apply_patch` payload
 carries no file path, so that hook never formatted anything. Any approval
 recorded for the old project hooks under `[hooks.state]` is now unused.

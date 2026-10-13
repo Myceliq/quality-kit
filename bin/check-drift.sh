@@ -49,9 +49,10 @@ same hooks/format-changed.sh         .quality/format-changed.sh
 same hooks/format-changed-adapter.sh .quality/format-changed-adapter.sh
 same hooks/stop-validate.sh          .quality/stop-validate.sh
 # The kit stamps no Codex project hooks any more (stamp.sh says why). A .codex/hooks.json that
-# still runs a .quality/ script is an earlier stamp's file that a re-stamp would have removed.
-if [ -f "$REPO/.codex/hooks.json" ] && grep -q '\.quality/' "$REPO/.codex/hooks.json"; then
-  err ".codex/hooks.json runs a .quality/ script — the kit no longer stamps Codex project hooks (the Codex turn-end gate is the user-level hook hooks/codex-stop.sh); re-stamp to remove it, or delete those entries"
+# still runs one of the two scripts earlier kits wired there is that stamp's file, which a
+# re-stamp would have removed. Only those two names: any other hook is the repo's own.
+if [ -f "$REPO/.codex/hooks.json" ] && grep -qE '\.quality/(stop-validate|format-changed-adapter)\.sh' "$REPO/.codex/hooks.json"; then
+  err ".codex/hooks.json runs a stamped .quality/ hook script — the kit no longer stamps Codex project hooks (the Codex turn-end gate is the user-level hook hooks/codex-stop.sh); re-stamp to remove it, or delete those entries"
 fi
 # profile is repo-controlled (.quality-kit.json) — flipping it would let the
 # checks below skip a whole category unless we confirm the *other* profile's

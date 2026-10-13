@@ -50,12 +50,13 @@ out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*oxlint.config.ts" && ok "edited stamped file caught" || bad "edited stamped file caught" "$out"
 
 # The kit stamps no Codex project hooks. A .codex/hooks.json left behind by an earlier stamp —
-# one that runs a .quality/ script — is drift; a hooks file of the repo's own is not.
+# one that runs a stamped .quality/ hook script — is drift; a hooks file of the repo's own is
+# not, even when its hook is a script the repo keeps under .quality/.
 R="$(fresh)"; mkdir "$R/.codex"
 printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash \\"$(git rev-parse --show-toplevel)\\"/.quality/stop-validate.sh"}]}]}}' > "$R/.codex/hooks.json"
 out="$(run "$R" || true)"
-echo "$out" | grep -q "DRIFT.*\.codex/hooks.json runs a .quality/ script" && ok "leftover stamped Codex hooks file caught" || bad "leftover stamped Codex hooks file caught" "$out"
-printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"true"}]}]}}' > "$R/.codex/hooks.json"
+echo "$out" | grep -q "DRIFT.*\.codex/hooks.json runs a stamped .quality/ hook script" && ok "leftover stamped Codex hooks file caught" || bad "leftover stamped Codex hooks file caught" "$out"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash .quality/own-check.sh"}]}]}}' > "$R/.codex/hooks.json"
 run "$R" >/dev/null && ok "a repo's own Codex hooks file is not drift" || bad "a repo's own Codex hooks file is not drift" "$(run "$R" || true)"
 
 R="$(fresh)"
