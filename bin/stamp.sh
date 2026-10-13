@@ -241,14 +241,25 @@ if [ -f "$REPO/.quality/manifest.sha256" ] && [ "$FORCE" -ne 1 ]; then
   fi
 fi
 
-mkdir -p "$REPO/.quality" "$REPO/.github/workflows" "$REPO/.claude" "$REPO/.codex"
+# The kit stamps no Codex project hooks: a hook loaded from a project is launched with the
+# turn's working directory and cannot name its own project, so the Codex turn-end gate is a
+# user-level hook instead (hooks/codex-stop.sh; README, "The Codex turn-end gate"). A
+# .codex/hooks.json that an EARLIER stamp wrote is removed here — the previous manifest
+# listing it is what says the kit wrote it; one the repo added itself is never listed and
+# never touched.
+if [ -f "$REPO/.quality/manifest.sha256" ] && grep -q '  \.codex/hooks\.json$' "$REPO/.quality/manifest.sha256"; then
+  rm -f "$REPO/.codex/hooks.json"
+  rmdir "$REPO/.codex" 2>/dev/null || true
+  echo "→ removed .codex/hooks.json (stamped by an earlier kit; the Codex turn-end gate is now a user-level hook)"
+fi
+
+mkdir -p "$REPO/.quality" "$REPO/.github/workflows" "$REPO/.claude"
 STAMPED=()
 put() { install -m "$2" "$KIT/$1" "$REPO/$3"; STAMPED+=("$3"); }
 
 put hooks/format-changed.sh         755 .quality/format-changed.sh
 put hooks/format-changed-adapter.sh 755 .quality/format-changed-adapter.sh
 put hooks/stop-validate.sh          755 .quality/stop-validate.sh
-put hooks/codex-hooks.json          644 .codex/hooks.json
 
 RUNNER=npm
 if [ "$PROFILE" = python ]; then
@@ -537,13 +548,11 @@ echo "stamped $REPO (profile=$PROFILE, kit=$VERSION)"
 # stamp PRs stall on one of these (npm ci reconcile, .claude gitignore, the
 # first-commit hook bootstrap, protected-path override).
 echo "→ before committing: read 'Stamping a repo — known gotchas' in quality-kit/README.md"
-# .codex/hooks.json is written like any other stamped file, but writing it does
-# not arm it: Codex drops a project's hooks unless the project is trusted in the
-# user's own config, and drops an unreviewed hook even in a trusted project —
-# both silently. Say so here, because a stamp that looks complete is exactly
-# when the operator stops checking. The kit does not touch the Codex config.
-echo "→ .codex/hooks.json is stamped but INERT until Codex trusts this project AND the hooks are approved once — read 'The stamped Codex hooks' in quality-kit/README.md"
+# Nothing the stamp writes gates a Codex turn: that gate is a user-level hook, installed once
+# per machine and approved once in Codex, and it is skipped silently until then. Say so
+# here, because a stamp that looks complete is exactly when the operator stops checking.
+echo "→ Codex turn-end gate: NOT stamped — it is the user-level hook hooks/codex-stop.sh, OFF until it is installed and approved once per machine, and it runs only in projects Codex trusts — read 'The Codex turn-end gate' in quality-kit/README.md"
 # The boundary belongs in the OUTPUT, not only in this comment: an operator told
 # a control is off will look for the switch, and needs to know the kit did not
 # flip it for them and will not.
-echo "  (the kit does not read or write "'$CODEX_HOME'"/config.toml, default ~/.codex — granting trust is yours to do)"
+echo "  (the kit does not read or write "'$CODEX_HOME'"/config.toml or hooks.json, default ~/.codex — installing the hook and granting trust are yours to do)"

@@ -25,22 +25,21 @@ echo "$first_out"
 
 for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/suppression-baseline.json \
          .quality/manifest.sha256 .quality-kit.json oxlint.config.ts oxfmt.config.ts \
-         tsconfig.quality.json .github/workflows/quality.yml .codex/hooks.json .claude/settings.json; do
+         tsconfig.quality.json .github/workflows/quality.yml .claude/settings.json; do
   [ -f "$R/$f" ] && ok "stamped $f" || bad "stamped $f" "missing"
 done
 
-# stamping .codex/hooks.json does not arm it — Codex skips a project's hooks
-# unless the project is trusted AND the hook approved, both silently. Losing
-# this line is how the kit goes back to shipping a gate nobody knows is off.
-# Assert BOTH gates and the config boundary: a grep on the first clause alone
-# stays green while the warning silently loses the second activation condition,
-# which is the one nobody performs.
-echo "$first_out" | grep -q "INERT until Codex trusts this project AND the hooks are approved once" \
-  && ok "stamp names both Codex trust gates" \
-  || bad "stamp names both Codex trust gates" "$first_out"
-echo "$first_out" | grep -Fq 'does not read or write $CODEX_HOME/config.toml, default ~/.codex' \
-  && ok "stamp states the kit does not grant trust itself" \
-  || bad "stamp states the kit does not grant trust itself" "$first_out"
+# The stamp writes no Codex project hooks, and says where the Codex turn-end gate lives instead.
+# That gate is off until the operator installs and approves it, silently; losing this line is
+# how the kit goes back to shipping a gate nobody knows is off. Assert the activation
+# conditions and the config boundary, not just the first clause.
+[ ! -e "$R/.codex" ] && ok "stamp writes no .codex/" || bad "stamp writes no .codex/" "$(ls -A "$R/.codex")"
+echo "$first_out" | grep -q "hooks/codex-stop.sh, OFF until it is installed and approved once per machine, and it runs only in projects Codex trusts" \
+  && ok "stamp names the Codex gate's activation conditions" \
+  || bad "stamp names the Codex gate's activation conditions" "$first_out"
+echo "$first_out" | grep -Fq 'does not read or write $CODEX_HOME/config.toml or hooks.json, default ~/.codex' \
+  && ok "stamp states the kit does not install the hook or grant trust itself" \
+  || bad "stamp states the kit does not install the hook or grant trust itself" "$first_out"
 
 python3 -c "
 import json
@@ -93,6 +92,38 @@ bash "$S" "$E" --profile nextjs
 (cd "$R" && git add -A && git -c user.name=test -c user.email=test@test.local commit -q -m stamped)
 bash "$S" "$R" --profile nextjs
 [ -z "$(cd "$R" && git status --porcelain)" ] && ok "idempotent re-stamp" || bad "idempotent re-stamp" "$(cd "$R" && git status --porcelain)"
+
+# Upgrade from a kit that stamped .codex/hooks.json: the re-stamp removes that file, because the
+# previous manifest lists it. The fixture is the 0.5.8 Stop entry, hashed into the manifest the
+# way that stamp wrote it. The control arm is the same file NOT in the manifest — a hooks file
+# the repo owns — and it must survive untouched.
+old_codex_hooks() { # $1=repo → writes the hooks file an earlier kit stamped
+  mkdir -p "$1/.codex"
+  cat > "$1/.codex/hooks.json" <<'EOF'
+{
+  "hooks": {
+    "Stop": [
+      { "matcher": "", "hooks": [ { "type": "command", "command": "bash \"$(git rev-parse --show-toplevel)\"/.quality/stop-validate.sh", "timeout": 120 } ] }
+    ]
+  }
+}
+EOF
+}
+old_codex_hooks "$R"
+(cd "$R" && sha256sum .codex/hooks.json >> .quality/manifest.sha256)
+up_out="$(bash "$S" "$R" --profile nextjs 2>&1)"
+[ ! -e "$R/.codex" ] && echo "$up_out" | grep -q "removed .codex/hooks.json" \
+  && ok "re-stamp removes a .codex/hooks.json an earlier stamp wrote" \
+  || bad "re-stamp removes a .codex/hooks.json an earlier stamp wrote" "$(ls -A "$R/.codex" 2>&1) / $up_out"
+grep -q 'codex' "$R/.quality/manifest.sha256" \
+  && bad "new manifest no longer lists .codex/hooks.json" "$(cat "$R/.quality/manifest.sha256")" \
+  || ok "new manifest no longer lists .codex/hooks.json"
+old_codex_hooks "$R"; before="$(sha256sum < "$R/.codex/hooks.json")"
+bash "$S" "$R" --profile nextjs >/dev/null 2>&1
+[ "$(sha256sum < "$R/.codex/hooks.json" 2>/dev/null)" = "$before" ] \
+  && ok "re-stamp leaves a .codex/hooks.json it never stamped" \
+  || bad "re-stamp leaves a .codex/hooks.json it never stamped" "removed or rewritten"
+rm -r "$R/.codex"
 
 # refuses to clobber a locally-modified stamped file without --force
 echo hacked >> "$R/oxlint.config.ts"

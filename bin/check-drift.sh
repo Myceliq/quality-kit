@@ -48,7 +48,11 @@ same() { cmp -s "$KIT/$1" "$REPO/$2" || err "$2 diverges from kit — restore it
 same hooks/format-changed.sh         .quality/format-changed.sh
 same hooks/format-changed-adapter.sh .quality/format-changed-adapter.sh
 same hooks/stop-validate.sh          .quality/stop-validate.sh
-same hooks/codex-hooks.json          .codex/hooks.json
+# The kit stamps no Codex project hooks any more (stamp.sh says why). A .codex/hooks.json that
+# still runs a .quality/ script is an earlier stamp's file that a re-stamp would have removed.
+if [ -f "$REPO/.codex/hooks.json" ] && grep -q '\.quality/' "$REPO/.codex/hooks.json"; then
+  err ".codex/hooks.json runs a .quality/ script — the kit no longer stamps Codex project hooks (the Codex turn-end gate is the user-level hook hooks/codex-stop.sh); re-stamp to remove it, or delete those entries"
+fi
 # profile is repo-controlled (.quality-kit.json) — flipping it would let the
 # checks below skip a whole category unless we confirm the *other* profile's
 # byte-owned marker isn't still sitting there from the real stamp.

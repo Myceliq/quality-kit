@@ -164,49 +164,91 @@ stands anywhere else — another repository, another clone of this one, a
 submodule — the hook exits 0 and runs nothing. A payload with no usable `cwd`
 falls back to the hook process's own cwd, under the same rule.
 
-## The stamped Codex hooks (`.codex/hooks.json`)
+## The Codex turn-end gate (`hooks/codex-stop.sh`)
 
-The stamp writes `.codex/hooks.json` — a `PostToolUse` formatter and a `Stop`
-gate that runs `.quality/stop-validate.sh` at turn end. **Stamping the file is
-not enough to make it run.** Codex applies two independent trust gates, and
-each drops the hooks *silently*: no warning on the run, nothing in the
-transcript, so a stamped-but-inert repo looks exactly like a gated one.
+The kit stamps **no Codex hooks into a repo**. Codex launches a hook with the
+turn's working directory and gives it nothing that names the project its
+`hooks.json` was loaded from, so a hook stamped into a project cannot name that
+project's own script. The Codex side of the turn-end gate is therefore one
+**user-level** hook, installed once per machine like the global pre-commit gate.
+(Probed on `codex-cli 0.162.1`; source read at `openai/codex` tag
+`rust-v0.162.1`.)
 
-1. **The project must be trusted.** A project's `.codex/` config layer is
-   discarded at load unless that project is trusted in the user's own Codex
-   config — in `$CODEX_HOME/config.toml`, where `$CODEX_HOME` defaults to
-   `~/.codex`:
+At turn end `hooks/codex-stop.sh` reads the `cwd` field of the hook payload,
+finds the checkout holding it, and runs that checkout's
+`.quality/stop-validate.sh` **only when Codex itself treats that checkout as a
+trusted project**. Anything else exits 0 and runs nothing.
 
-       [projects."<path>"]
-       trust_level = "trusted"
+### Install (once per machine)
 
-   and `hooks.json` is only read from layers that
-   survived the load — so an untrusted project has no hooks at all. Codex's
-   interactive TUI asks "do you trust this folder?" the first time it opens
-   one; the non-interactive runner grants and persists the same trust by
-   itself *when the sandbox already permits writing the working directory*.
-   Under a read-only sandbox, or against an explicit
-   `trust_level = "untrusted"`, the hooks never load.
-2. **Each hook must be approved once.** Even inside a trusted project, a hook
-   Codex has not seen before counts as untrusted and does not run until it is
-   approved in the TUI's hooks browser (which records its hash under
-   `[hooks.state]`) or the invocation opts out of the review with
-   `--dangerously-bypass-hook-trust`. Re-stamping a *changed* `hooks.json`
-   changes that hash and needs a fresh approval.
+1. Keep a checkout of the kit at a stable path, outside any project. Python
+   3.11+ must be `python3` on the PATH Codex runs hooks with (the hook reads
+   `config.toml` with `tomllib`).
+2. Add a `Stop` entry naming the script by absolute path to
+   `$CODEX_HOME/hooks.json` (`$CODEX_HOME` defaults to `~/.codex`), merging it
+   into the hooks already there:
 
-So on a freshly stamped repo the Codex-side turn-end gate is **off** until
-someone has opened that repo in Codex once and approved the hooks. Confirm it
-rather than assuming; the same `.quality/stop-validate.sh` also hangs off the
-`Stop` hook in `.claude/settings.json`, which has no trust gate, so one agent's
-side can be gated while Codex's is inert. The kit never reads or writes
-`$CODEX_HOME/config.toml` — granting trust is the operator's call, on their own
-machine.
+       {
+         "hooks": {
+           "Stop": [
+             {
+               "matcher": "",
+               "hooks": [
+                 { "type": "command", "command": "bash /abs/path/to/quality-kit/hooks/codex-stop.sh", "timeout": 120 }
+               ]
+             }
+           ]
+         }
+       }
 
-Trust is keyed by path, so a second *clone* of the same repo needs its own
-entry. Linked git worktrees do not: Codex resolves a worktree to its main
-checkout before looking up trust, and reads the **main checkout's**
-`.codex/hooks.json` rather than the worktree's — which also means a `hooks.json`
-edited on a branch inside a worktree does not take effect there.
+3. **Approve the hook once.** A hook Codex has not seen before does not run
+   until it is approved in the TUI's hooks browser, which records its hash
+   under `[hooks.state]` in `config.toml`. Until then it is skipped
+   *silently*: no warning on the run, nothing in the transcript. Changing the
+   command string changes the hash and needs a fresh approval; updating the
+   script behind the same path does not.
+
+The kit never reads or writes `$CODEX_HOME/hooks.json` for you and never writes
+`config.toml`. Installing the hook and granting trust are the operator's call,
+on their own machine. Confirm the gate is live rather than assuming: end a turn
+in a trusted, stamped repo with a failing `validate:fast` and a non-docs change,
+and check the turn is blocked.
+
+### Which repositories it runs in
+
+The same ones whose project config Codex would load, resolved the same way:
+
+- The checkout is the nearest ancestor of the payload's `cwd` that holds a
+  `.git` entry. A repository nested inside another is its own checkout.
+- Its trust is the first `[projects."<path>"]` entry with a `trust_level` in
+  `$CODEX_HOME/config.toml`, looking up the checkout's canonical path, then its
+  path as spelled, then the same two for its main checkout when it is a linked
+  worktree. Only `trust_level = "trusted"` runs the gate; an explicit
+  `"untrusted"` on a worktree wins over a trusted main checkout.
+- A linked worktree counts as its main checkout's only when the registration
+  under `<main>/.git/worktrees/<name>/` points back at that worktree and the
+  main checkout owns the git directory. The hook runs no `git` command to
+  decide this and reads nothing from the checkout's own git config.
+- Trust is keyed by path, so a second *clone* of a repo needs its own entry.
+
+It is deliberately narrower than Codex in three cases, each of which leaves the
+gate off: trust that exists only in a `-c` override or a managed/system config
+layer, a non-default `project_root_markers`, and a trust entry on a
+subdirectory of a checkout.
+
+The checkout must also carry both `.quality/stop-validate.sh` and
+`.quality-kit.json`. The script that runs is the checkout's own copy, with its
+exit status and stderr passed through.
+
+### Upgrading a repo stamped before 0.5.9
+
+Earlier kits stamped `.codex/hooks.json` with a `Stop` and a `PostToolUse`
+entry. Re-stamping removes that file (the previous stamp's manifest lists it; a
+hooks file the repo added itself is left alone), and `check-drift.sh` reports a
+`.codex/hooks.json` that still runs a `.quality/` script. The `PostToolUse`
+formatter entry is gone without a replacement: Codex's `apply_patch` payload
+carries no file path, so that hook never formatted anything. Any approval
+recorded for the old project hooks under `[hooks.state]` is now unused.
 
 ## .quality-kit.json (written into each stamped repo)
 
@@ -358,9 +400,9 @@ stamp PR — most of them BLOCK a green stamp.
   root fails closed with "pins no next version". That is
   [#7](https://github.com/Myceliq/quality-kit/issues/7) part 5, which also moves
   where `package.json` and the test glob live.
-- **The stamped `.codex/hooks.json` does not run until Codex trusts the repo.**
-  Both of Codex's trust gates skip hooks silently, so the stamp looks complete
-  while the turn-end gate is off. See "The stamped Codex hooks" above.
+- **Stamping does not gate Codex turns.** The Codex turn-end gate is a
+  user-level hook, off until it is installed and approved once per machine, and
+  skipped silently until then. See "The Codex turn-end gate" above.
 - **`.claude/` gitignored.** The stamp writes `.claude/settings.json` (Stop +
   PostToolUse hooks); a repo that ignores all of `/.claude/` never commits it,
   so the drift gate fails (`… lost or altered the kit … hook`). Carve it out —

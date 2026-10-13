@@ -8,16 +8,16 @@ Validation contract, identical local and CI (`npm run` / `make` per this repo's
   extras → build. CI runs exactly this.
 - `validate:fast` (make: `validate-fast`) — repair loop: format:check → lint →
   typecheck → affected tests. Run after EVERY implementation attempt and
-  before reporting done. Never assume a hook already ran it: the stamped
-  `.codex/hooks.json` turn-end gate stays inert until the user has trusted
-  this project and approved the hooks in their own Codex config, and it is
-  skipped silently until then. Pre-commit still runs it. If you cannot paste
+  before reporting done. Never assume a hook already ran it: the Codex
+  turn-end gate is a user-level hook that is off until the user has installed
+  and approved it and trusted this project in their own Codex config, and it
+  is skipped silently until then. Pre-commit still runs it. If you cannot paste
   the output, you have not run it.
 
 Rules (CI drift gate enforces these — a PR that violates them cannot merge):
 
 - Never edit stamped files (`.quality/`, `oxlint.config.ts`, `oxfmt.config.ts`,
-  `tsconfig.quality.json`, `.github/workflows/quality.yml`, `.codex/hooks.json`;
+  `tsconfig.quality.json`, `.github/workflows/quality.yml`;
   python profile: `ruff.toml`, `pyrightconfig.json`, `Makefile.quality`).
   Change the kit at github.com/Myceliq/quality-kit and re-stamp instead.
 - Never add lint/type suppressions — including any oxlint disable /

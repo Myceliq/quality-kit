@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # What: diff-aware turn-end gate — an agent cannot end its turn with the
 #       working tree failing validate:fast.
-# Where: stamped as .quality/stop-validate.sh; wired as Claude/Codex Stop hook.
+# Where: stamped as .quality/stop-validate.sh; run by the stamped Claude Stop hook and by the
+#       user-level Codex Stop hook (hooks/codex-stop.sh).
 # Why:  closes "agent declares done without checking". exit 2 + stderr is the
 #       block protocol in both runtimes. stop_hook_active releases after one
 #       blocked round to avoid livelock — pre-commit and CI still gate behind it.
