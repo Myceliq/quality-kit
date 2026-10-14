@@ -1424,4 +1424,27 @@ else
   echo "SKIP python ratchet (no uvx available)"
 fi
 
+# #89: a marker that is unparseable or lacks version/profile/runner is one named DRIFT line
+# and exit 66 — never a KeyError/JSONDecodeError traceback. `expect_marker <name> <want>`
+# runs the gate on $R and wants exactly that output and exit 66.
+expect_marker() { local out rc=0; out="$(run "$R")" || rc=$?
+  [ "$rc" = 66 ] && [ "$out" = "$2" ] && ok "$1" || bad "$1" "rc=$rc $out"
+  echo "$out" | grep -qE "Traceback|KeyError|JSONDecodeError" && bad "$1: no traceback" "$out" || ok "$1: no traceback"; }
+for k in profile version runner; do
+  R="$(fresh)"; qk_mut "$R" "del d['$k']"
+  expect_marker "marker without $k caught" "DRIFT: .quality-kit.json missing key '$k' — run quality-kit/bin/stamp.sh"
+done
+R="$(fresh)"; printf '%s' '{"runner": "make", "gate_files": ["pyproject.toml"]}' > "$R/.quality-kit.json"
+expect_marker "marker missing several keys names version first" "DRIFT: .quality-kit.json missing key 'version' — run quality-kit/bin/stamp.sh"
+R="$(fresh)"; printf '[]' > "$R/.quality-kit.json"
+expect_marker "marker that is a JSON array caught" "DRIFT: .quality-kit.json missing key 'version' — run quality-kit/bin/stamp.sh"
+R="$(fresh)"; : > "$R/.quality-kit.json"
+expect_marker "empty marker caught" "DRIFT: .quality-kit.json is not valid JSON — run quality-kit/bin/stamp.sh"
+R="$(fresh)"; echo '{' > "$R/.quality-kit.json"
+expect_marker "invalid JSON marker caught" "DRIFT: .quality-kit.json is not valid JSON — run quality-kit/bin/stamp.sh"
+R="$(fresh)"; rm "$R/.quality-kit.json"
+expect_marker "missing marker caught" "DRIFT: missing .quality-kit.json — run quality-kit/bin/stamp.sh"
+R="$(fresh)"; out="$(run "$R")" && ! echo "$out" | grep -q '^DRIFT:' \
+  && ok "fresh marker with all keys is clean" || bad "fresh marker with all keys is clean" "$out"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
