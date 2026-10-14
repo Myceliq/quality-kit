@@ -169,17 +169,14 @@ else bad "arm: a wrong oxlint version is refused" "rc=$rc out=$got"; fi
 OXLINT="${OXLINT_BIN:-}"
 if [ -z "$OXLINT" ]; then
   echo "SKIP oxlint severity check (set OXLINT_BIN to the pinned oxlint whose node_modules has ultracite)"
-else
-  if ! version_guard "$OXLINT"; then
-    :
-  else
-    W="$TMP/oxlint"
-    mkdir "$W"
-    ln -s "$(cd "$(dirname "$OXLINT")/.." && pwd)" "$W/node_modules"
-    cp "$KITROOT/ts/oxlint.config.nextjs.ts" "$W/oxlint.config.ts"
-    rc=0; (cd "$W" && "$OXLINT" --print-config >"$W/resolved.json" 2>"$W/stderr") || rc=$?
-    # oxlint prints severities as deny/warn/allow, a bare level or [level, options].
-    python3 - "$W" <<'PY' || rc=1
+elif version_guard "$OXLINT"; then
+  W="$TMP/oxlint"
+  mkdir "$W"
+  ln -s "$(cd "$(dirname "$OXLINT")/.." && pwd)" "$W/node_modules"
+  cp "$KITROOT/ts/oxlint.config.nextjs.ts" "$W/oxlint.config.ts"
+  rc=0; (cd "$W" && "$OXLINT" --print-config >"$W/resolved.json" 2>"$W/stderr") || rc=$?
+  # oxlint prints severities as deny/warn/allow, a bare level or [level, options].
+  python3 - "$W" <<'PY' || rc=1
 import json, sys
 w = sys.argv[1]
 rules = json.load(open(f"{w}/resolved.json"))["rules"]
@@ -187,12 +184,12 @@ level = {k: (v[0] if isinstance(v, list) else v) for k, v in rules.items()}
 open(f"{w}/error.txt", "w").write("".join(f"{k}\n" for k, v in level.items() if v == "deny"))
 open(f"{w}/allow.txt", "w").write("".join(f"{k}\n" for k, v in level.items() if v == "allow"))
 PY
-    if [ "$rc" != 0 ] || [ ! -s "$W/error.txt" ]; then
-      bad "nextjs config resolves" "rc=$rc $(cat "$W/stderr")"
-    else
-      # oxcheck FILE — one line per oxlint row in FILE whose rule is not at error.
-      oxcheck() {
-        python3 - "$1" "$W/error.txt" <<'PY'
+  if [ "$rc" != 0 ] || [ ! -s "$W/error.txt" ]; then
+    bad "nextjs config resolves" "rc=$rc $(cat "$W/stderr")"
+  else
+    # oxcheck FILE — one line per oxlint row in FILE whose rule is not at error.
+    oxcheck() {
+      python3 - "$1" "$W/error.txt" <<'PY'
 import json, sys
 errors = set(open(sys.argv[2]).read().split())
 try:
@@ -204,20 +201,19 @@ for k, r in sorted(rows.items()):
     if isinstance(r, dict) and r.get("by") == "oxlint" and r.get("rule") not in errors:
         print(f"{k} names {r.get('rule')}, which the nextjs config does not resolve at error")
 PY
-      }
-      OXROWS="every oxlint row names a rule at error in the resolved nextjs config"
-      hits="$(oxcheck "$RULES/coverage.json")"
-      if [ -z "$hits" ]; then ok "$OXROWS"; else
-        while IFS= read -r h; do bad "$OXROWS" "$h"; done <<<"$hits"
-      fi
-      off="$(head -n1 "$W/allow.txt")"
-      if [ -z "$off" ]; then
-        bad "arm: a disabled oxlint rule is caught" "the resolved nextjs config has no disabled rule to probe with"
-      else
-        fresh; mutate "rows['js-hoist-regexp'] = {'by': 'oxlint', 'rule': '$off', 'static_export': 'applies', 'why': 'x'}"
-        grep -qF -- "$off" <<<"$(oxcheck "$T/coverage.json")" \
-          && ok "arm: a disabled oxlint rule is caught" || bad "arm: a disabled oxlint rule is caught" "oxcheck did not report $off"
-      fi
+    }
+    OXROWS="every oxlint row names a rule at error in the resolved nextjs config"
+    hits="$(oxcheck "$RULES/coverage.json")"
+    if [ -z "$hits" ]; then ok "$OXROWS"; else
+      while IFS= read -r h; do bad "$OXROWS" "$h"; done <<<"$hits"
+    fi
+    off="$(head -n1 "$W/allow.txt")"
+    if [ -z "$off" ]; then
+      bad "arm: a disabled oxlint rule is caught" "the resolved nextjs config has no disabled rule to probe with"
+    else
+      fresh; mutate "rows['js-hoist-regexp'] = {'by': 'oxlint', 'rule': '$off', 'static_export': 'applies', 'why': 'x'}"
+      grep -qF -- "$off" <<<"$(oxcheck "$T/coverage.json")" \
+        && ok "arm: a disabled oxlint rule is caught" || bad "arm: a disabled oxlint rule is caught" "oxcheck did not report $off"
     fi
   fi
 fi
