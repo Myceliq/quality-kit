@@ -346,8 +346,8 @@ best-practices rules (`best-practices/`), its composition-pattern rules
 never edited here.
 
 - **`SOURCE.json`** pins each source's repository, commit, licence (and licence
-  file), and the sha256 of every vendored file, `_`-prefixed scaffolding
-  included.
+  file), and the sha256 of every vendored rule file, `_`-prefixed scaffolding
+  included (the licence files are named but not hashed).
 - **`coverage.json`** says what enforces each rule: one row per rule file
   (keyed by its filename stem; the guidelines file is the single row
   `web-interface-guidelines`), with `by` set to `oxlint` (an oxlint rule the
