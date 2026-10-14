@@ -337,6 +337,36 @@ re-stamp byte-exact.
   exit 1) at lint time — not a silent no-op. (Verified for oxlint/TS profiles;
   a typo'd ruff code may behave differently — not verified.)
 
+## React rules — `ts/react-rules/`
+
+Reference data, not code the kit runs. `ts/react-rules/` holds Vercel's React
+best-practices rules (`best-practices/`), its composition-pattern rules
+(`composition/`) and the web interface guidelines
+(`web-interface-guidelines.md`), vendored as pinned upstream bytes that are
+never edited here.
+
+- **`SOURCE.json`** pins each source's repository, commit, licence (and licence
+  file), and the sha256 of every vendored rule file, `_`-prefixed scaffolding
+  included (the licence files are named but not hashed).
+- **`coverage.json`** says what enforces each rule: one row per rule file
+  (keyed by its filename stem; the guidelines file is the single row
+  `web-interface-guidelines`), with `by` set to `oxlint` (an oxlint rule the
+  `nextjs` profile resolves at error catches the rule's incorrect example, named
+  in `rule`), `custom` (a machine could catch it, no enabled oxlint rule does)
+  or `review` (needs judgment), plus `static_export` (`n/a` only for rules that
+  cannot occur in a Next `output: "export"` build) and a `why`.
+- **`ts/react-rules.test.sh`** fails when a vendored rule file has no row or a
+  row names no file, when any byte differs from `SOURCE.json`, or when a row's
+  values are invalid; with `OXLINT_BIN` set to the pinned oxlint it also checks
+  every `oxlint` row against that oxlint's own `--print-config` of
+  `ts/oxlint.config.nextjs.ts`.
+
+**Bumping to a new upstream commit** is an edit of `SOURCE.json` and
+`coverage.json`: replace the files with the new commit's bytes, update that
+source's `commit` and every changed sha256 in `SOURCE.json`, then add, drop or
+reclassify rows in `coverage.json` until `ts/react-rules.test.sh` passes with
+the pinned toolchain. Never edit a vendored file to make it pass.
+
 ## Stamping a repo — known gotchas
 
 Hit during the mentzer-method pilot (Wave 1). Check these before opening the
