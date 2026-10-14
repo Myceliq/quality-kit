@@ -272,6 +272,8 @@ if [ "$PROFILE" = python ]; then
   grep -q '^include Makefile.quality$' "$REPO/Makefile" || printf '\ninclude Makefile.quality\n' >> "$REPO/Makefile"
 else
   put "ts/oxlint.config.$PROFILE.ts" 644 oxlint.config.ts
+  # the nextjs config's jsPlugins entry: the kit rules for its custom React rules
+  if [ "$PROFILE" = nextjs ]; then put ts/oxlint-react-rules.mjs 644 oxlint-react-rules.mjs; fi
   put ts/oxfmt.config.ts             644 oxfmt.config.ts
   put ts/tsconfig.strict.json        644 tsconfig.quality.json
   put "ts/quality.$MANAGER.yml"      644 .github/workflows/quality.yml

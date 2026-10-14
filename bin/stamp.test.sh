@@ -29,6 +29,23 @@ for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/suppressi
   [ -f "$R/$f" ] && ok "stamped $f" || bad "stamped $f" "missing"
 done
 
+# The nextjs config loads the kit's custom React rules from jsPlugins files. Each
+# one the stamped config names must be stamped and hashed: a missing one fails the
+# repo's lint at config load, and an unhashed one is a stamped file nothing guards.
+msg="$(python3 - "$R" 2>&1 <<'PY'
+import os, re, sys
+r = sys.argv[1]
+m = re.search(r"jsPlugins:\s*\[([^\]]*)\]", open(os.path.join(r, "oxlint.config.ts")).read())
+paths = [os.path.normpath(p) for p in re.findall(r'"([^"]+)"', m[1])] if m else []
+hashed = {l.rstrip("\n").split("  ", 1)[-1] for l in open(os.path.join(r, ".quality/manifest.sha256"))}
+assert paths, "the stamped oxlint.config.ts names no jsPlugins file"
+for p in paths:
+    assert os.path.isfile(os.path.join(r, p)), f"{p} is not stamped"
+    assert p in hashed, f"{p} is not in .quality/manifest.sha256"
+PY
+)" && ok "every jsPlugins file the stamped config loads is stamped and in the manifest" \
+  || bad "every jsPlugins file the stamped config loads is stamped and in the manifest" "$msg"
+
 # The stamp writes no Codex project hooks, and says where the Codex turn-end gate lives instead.
 # That gate is off until the operator installs and approves it, silently; losing this line is
 # how the kit goes back to shipping a gate nobody knows is off. Assert the activation

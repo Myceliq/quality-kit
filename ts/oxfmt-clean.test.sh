@@ -29,6 +29,8 @@ W="$(mktemp -d)"
 ln -s "$NM" "$W/node_modules"
 cp "$DIR/oxfmt.config.ts" "$W/"
 cp "$DIR/oxlint.config.nextjs.ts" "$DIR/oxlint.config.vite.ts" "$DIR/oxlint.config.node.ts" "$W/"
+# the nextjs profile's stamped React-rules plugin, checked by the same format:check
+cp "$DIR/oxlint-react-rules.mjs" "$W/"
 
 if out="$("$OXFMT" --check "$W" 2>&1)"; then
   ok "shipped TS configs are oxfmt-clean"

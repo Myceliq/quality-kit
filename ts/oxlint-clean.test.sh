@@ -56,4 +56,21 @@ else
   bad "shipped TS configs are oxlint-clean" "oxlint output was not valid JSON — likely a config load failure: $out"
 fi
 
+# The nextjs profile also stamps its React-rules plugin, which every nextjs repo
+# then lints as its own source under the nextjs config — the same deadlock as
+# above if it carried a single violation.
+P="$(mktemp -d)"
+ln -s "$NM" "$P/node_modules"
+cp "$DIR/oxlint.config.nextjs.ts" "$P/oxlint.config.ts"
+cp "$DIR/oxlint-react-rules.mjs" "$P/"
+rc=0; out="$(cd "$P" && "$OXLINT" -f json oxlint-react-rules.mjs 2>&1)" || rc=$?
+if n="$(python3 -c "
+import json,sys
+print(len(json.loads(sys.stdin.read())['diagnostics']))" <<<"$out" 2>/dev/null)"; then
+  [ "$n" = 0 ] && [ "$rc" = 0 ] && ok "shipped lint plugin is oxlint-clean under the nextjs config" \
+    || bad "shipped lint plugin is oxlint-clean under the nextjs config" "rc=$rc, $n diagnostic(s): $out"
+else
+  bad "shipped lint plugin is oxlint-clean under the nextjs config" "oxlint output was not valid JSON — likely a config load failure: $out"
+fi
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

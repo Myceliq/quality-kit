@@ -86,6 +86,7 @@ if [ "$PROFILE" = python ]; then
 else
   [ -f "$REPO/Makefile.quality" ] && err "profile=$PROFILE but Makefile.quality (python-profile artifact) is present — profile field does not match the repo's actual stamped file set"
   same "ts/oxlint.config.$PROFILE.ts" oxlint.config.ts
+  if [ "$PROFILE" = nextjs ]; then same ts/oxlint-react-rules.mjs oxlint-react-rules.mjs; fi
   same ts/oxfmt.config.ts oxfmt.config.ts
   same ts/tsconfig.strict.json tsconfig.quality.json
   # by MANAGER, not a fixed name: a pnpm repo carrying the npm workflow (or the

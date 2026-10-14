@@ -92,6 +92,9 @@ print(sum(1 for x in d['diagnostics'] if x['code']=='eslint(func-style)'))" <<<"
 # rules here and lint cleanly, silently dropping every declared override. All
 # three shipped configs carry their own copy of the catch, so each is loaded.
 printf '{"version": oops' > "$W/.quality-kit.json"
+# stamped beside the nextjs config, which loads it — absent, the nextjs case could
+# fail to load for that reason instead of the corrupt file
+cp "$KITROOT/ts/oxlint-react-rules.mjs" "$W/"
 for p in node nextjs vite; do
   cp "$KITROOT/ts/oxlint.config.$p.ts" "$W/oxlint.config.ts"
   rc=0; out="$(cd "$W" && "$OXLINT" -f json probe.ts 2>&1)" || rc=$?

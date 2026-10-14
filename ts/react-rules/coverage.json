@@ -49,9 +49,9 @@
   },
   "async-parallel": {
     "by": "custom",
-    "rule": null,
+    "rule": "quality-kit/async-parallel",
     "static_export": "applies",
-    "why": "A machine can flag consecutive awaits where no later call reads an earlier result; no enabled oxlint rule does (no-await-in-loop only covers loops)."
+    "why": "quality-kit/async-parallel reports consecutive `const x = await ...` declarations where a later await reads no name an earlier one declared (verified on this rule's examples by ts/react-rules.test.sh). Bare `await f();` statements are left alone: their order is usually deliberate."
   },
   "async-suspense-boundaries": {
     "by": "review",
@@ -60,16 +60,16 @@
     "why": "n/a: a static export renders each page to HTML at build time, so there is no request-time stream for a Suspense boundary to unblock. Elsewhere, where to place boundaries is a layout-shift trade-off the rule leaves to judgment."
   },
   "bundle-analyzable-paths": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag import() and path.join calls whose path argument is not a string literal; no enabled oxlint rule does."
+    "why": "A non-literal import() or path.join argument is often a deliberate, bounded variable such as a locale or a route map; telling one that defeats bundle or trace analysis from one that does not needs knowing the build, so a lint rule would flag correct code."
   },
   "bundle-barrel-imports": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag named imports from known barrel packages that next.config's optimizePackageImports does not list; oxc/no-barrel-file only flags writing a barrel file, and the incorrect example passes the nextjs profile."
+    "why": "Which packages are barrels, and whether next.config's optimizePackageImports already lists them, lives outside the importing file, so a rule that sees one file at a time cannot decide it; oxc/no-barrel-file only flags writing a barrel file."
   },
   "bundle-conditional": {
     "by": "review",
@@ -102,28 +102,28 @@
     "why": "Whether a global listener is registered by enough component instances to be worth sharing through useSWRSubscription depends on how the hook is used."
   },
   "client-localstorage-schema": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag localStorage.getItem/setItem calls outside try/catch or with a key that carries no version; no enabled oxlint rule does."
+    "why": "Whether a storage key needs a version and which reads need a try/catch depends on how long the stored data lives and how its shape changes; a lint rule cannot tell a versioned key from any other string."
   },
   "client-passive-event-listeners": {
     "by": "custom",
-    "rule": null,
+    "rule": "quality-kit/client-passive-event-listeners",
     "static_export": "applies",
-    "why": "A machine can flag addEventListener for touchstart, touchmove or wheel without an options argument; no enabled oxlint rule does."
+    "why": "quality-kit/client-passive-event-listeners reports addEventListener for touchstart, touchmove, wheel or mousewheel without an options argument (verified on this rule's examples by ts/react-rules.test.sh). An explicit { passive: false } for a listener that calls preventDefault() passes."
   },
   "client-swr-dedup": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag fetch() called inside a useEffect; no enabled oxlint rule does."
+    "why": "A fetch() inside a useEffect is sometimes right, such as a one-off request no other component shares; whether SWR's deduplication pays off depends on how many components ask for the same data."
   },
   "js-batch-dom-css": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag a layout read (offsetWidth, offsetHeight, getBoundingClientRect, getComputedStyle) between style writes to the same element; no enabled oxlint rule does."
+    "why": "Whether a layout read sits between style writes to the same element depends on which variables alias that element and on which properties force layout; a syntax rule cannot track that without flagging unrelated reads."
   },
   "js-cache-function-results": {
     "by": "review",
@@ -144,10 +144,10 @@
     "why": "Whether storage or cookie reads are frequent enough to cache, and how that cache is invalidated, needs judgment."
   },
   "js-combine-iterations": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag several .filter() or .map() calls over the same array in one scope; no enabled oxlint rule does."
+    "why": "Several .filter() or .map() passes over one array are often clearer than one combined loop and cost little on a small array; merging them is a hot-path judgment."
   },
   "js-early-exit": {
     "by": "review",
@@ -157,33 +157,33 @@
   },
   "js-flatmap-filter": {
     "by": "custom",
-    "rule": null,
+    "rule": "quality-kit/js-flatmap-filter",
     "static_export": "applies",
-    "why": "A machine can flag .map(...).filter(Boolean); unicorn/prefer-array-flat-map only flags .map().flat(), and the incorrect example passes the nextjs profile."
+    "why": "quality-kit/js-flatmap-filter reports .map(...).filter(Boolean) (verified on this rule's examples by ts/react-rules.test.sh); unicorn/prefer-array-flat-map only flags .map().flat()."
   },
   "js-hoist-regexp": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag new RegExp(...) in a component body outside useMemo; prefer-regex-literals only flags constant patterns, not the example's template literal."
+    "why": "Both vendored examples contain `{parts.map((part, i) => ...)}`, which is not valid TSX, so the correct example cannot pass lint and no fixture can prove a rule; prefer-regex-literals covers constant patterns, and the rest is checked in review."
   },
   "js-index-maps": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag .find() on one array inside a .map() or loop over another; no enabled oxlint rule does."
+    "why": "A .find() inside a .map() or loop is only worth replacing with a Map when both arrays are large; on small arrays building the Map costs more than it saves."
   },
   "js-length-check-first": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag an expensive comparison of two arrays with no length check before it; unicorn/no-array-sort fires on the example's .sort() but is satisfied by .toSorted(), which keeps the missing length check."
+    "why": "Which comparisons are expensive enough to guard with a length check, and whether the lengths can differ at all, needs knowing the data; unicorn/no-array-sort covers the example's in-place .sort()."
   },
   "js-min-max-loop": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag a sort whose result is only indexed at [0] or [length - 1]; unicorn/no-array-sort fires on the example but is satisfied by .toSorted(), which still sorts to find a minimum or maximum."
+    "why": "Telling a sort whose result is only read at [0] or [length - 1] from one whose order is used later needs following every use of the result; unicorn/no-array-sort covers the example's in-place .sort()."
   },
   "js-request-idle-callback": {
     "by": "review",
@@ -198,10 +198,10 @@
     "why": "unicorn/prefer-set-has reports a const array used only for .includes() checks (verified on this rule's incorrect example with oxlint 1.74.0)."
   },
   "js-tosorted-immutable": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag .sort() on a prop or state array; unicorn/no-array-sort did not fire on the example's users.sort() returned from a useMemo callback (oxlint 1.74.0)."
+    "why": "Whether the array a .sort() mutates is a prop or state, rather than a local copy, needs tracing where it came from across components; unicorn/no-array-sort did not fire on the example's users.sort() returned from a useMemo callback (oxlint 1.74.0)."
   },
   "rendering-activity": {
     "by": "review",
@@ -210,16 +210,16 @@
     "why": "The rule gives only a positive example; which toggled subtrees are expensive enough to keep mounted with <Activity> is a judgment."
   },
   "rendering-animate-svg-wrapper": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag an animation class or animated style on an <svg> element; no enabled oxlint rule does."
+    "why": "Whether a class on an <svg> animates it is defined in CSS, outside the component file, so a lint rule cannot tell an animation class from any other."
   },
   "rendering-conditional-render": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine with type information can flag {x && <El />} where x is a number; no enabled oxlint rule does, and the incorrect example passes the nextjs profile."
+    "why": "Flagging {x && <El />} only where x can be a number needs type information, which the kit's JS-plugin rules do not get; without it every boolean condition would be flagged too."
   },
   "rendering-content-visibility": {
     "by": "review",
@@ -240,10 +240,10 @@
     "why": "Static export pages are still prerendered and hydrated. Telling a stored preference that needs a pre-hydration script from one that may update after hydration is a UX judgment."
   },
   "rendering-hydration-suppress-warning": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag new Date(), Date.now() or Math.random() rendered into JSX; no enabled oxlint rule does. A static export renders at build time, so such values always differ on the client."
+    "why": "Whether a date or random value rendered into JSX differs between server and client depends on whether the component is prerendered, and whether suppressHydrationWarning or a client-only render is the fix is a judgment. A static export renders at build time, so such values always differ on the client."
   },
   "rendering-resource-hints": {
     "by": "review",
@@ -258,10 +258,10 @@
     "why": "nextjs/no-sync-scripts reports a <script src> without async or defer (verified on this rule's incorrect example with oxlint 1.74.0)."
   },
   "rendering-svg-precision": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine (e.g. SVGO run in CI) can flag path data with more decimals than needed; oxlint does not lint SVG markup."
+    "why": "Its vendored examples are fenced svg, not TypeScript, so there is no example a kit lint rule could be proved on, and oxlint does not lint SVG markup; trimming path precision belongs to an SVGO step in the asset pipeline."
   },
   "rendering-usetransition-loading": {
     "by": "review",
@@ -270,16 +270,16 @@
     "why": "Whether a manual isLoading state should become useTransition depends on whether the update is a non-urgent transition."
   },
   "rerender-defer-reads": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag a useSearchParams() result that is read only inside callbacks; no enabled oxlint rule does."
+    "why": "Whether a useSearchParams() result is read only inside callbacks needs following it through closures, custom hooks and child props; a rule that sees one file at a time would miss or misreport the reads passed down."
   },
   "rerender-dependencies": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag an object dependency when the effect reads only one primitive field of it; react/exhaustive-deps accepts the wider dependency."
+    "why": "Whether an effect should depend on a whole object or on one primitive field of it depends on what the effect does with the object; react/exhaustive-deps accepts both, and narrowing is a judgment."
   },
   "rerender-derived-state": {
     "by": "review",
@@ -294,16 +294,16 @@
     "why": "react/react-compiler reports state derived from props or state and set inside an effect (EffectDerivationsOfState, EffectSetState; verified on this rule's incorrect example with oxlint 1.74.0)."
   },
   "rerender-functional-setstate": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag setX(...) whose argument reads x; react/exhaustive-deps only catches the example's stale-closure half (the missing items dependency), not the update that lists items as a dependency."
+    "why": "Whether setX(...) reading x needs the functional form depends on whether another update can land in between, which the code shape does not show; react/exhaustive-deps catches the example's stale-closure half (the missing items dependency)."
   },
   "rerender-lazy-state-init": {
     "by": "custom",
-    "rule": null,
+    "rule": "quality-kit/rerender-lazy-state-init",
     "static_export": "applies",
-    "why": "A machine can flag useState(f(...)) whose initial value is a function call; no enabled oxlint rule does."
+    "why": "quality-kit/rerender-lazy-state-init reports useState whose initial value is a call or new expression rather than a function (verified on this rule's examples by ts/react-rules.test.sh)."
   },
   "rerender-memo": {
     "by": "review",
@@ -330,10 +330,10 @@
     "why": "react/no-unstable-nested-components reports a component defined inside another component (verified on this rule's incorrect example with oxlint 1.74.0)."
   },
   "rerender-simple-expression-in-memo": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag a useMemo callback that only returns a short boolean or arithmetic expression; no enabled oxlint rule does."
+    "why": "Where a useMemo stops paying for itself is a cost judgment: a short expression can still be memoized to keep a value referentially stable, and React Compiler changes the answer."
   },
   "rerender-split-combined-hooks": {
     "by": "review",
@@ -378,22 +378,22 @@
     "why": "n/a: caching across requests needs request-time server code, which a static export does not have. Elsewhere, whether data is shared across requests and safe to cache is a judgment."
   },
   "server-cache-react": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag an inline object literal passed to a function wrapped in React cache(); no enabled oxlint rule does. Server components still render at build time in a static export."
+    "why": "The function wrapped in React cache() and the calls that pass it an inline object usually live in different files, so a rule that sees one file at a time cannot pair them. Server components still render at build time in a static export."
   },
   "server-dedup-props": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag a JSX element passed both x and a transform of x (x.toSorted(), x.filter(...)) as props; no enabled oxlint rule does. A static export still ships the RSC payload."
+    "why": "Whether a prop and a transform of it both need to cross the server/client boundary depends on what the client component does with each, which needs cross-file reading. A static export still ships the RSC payload."
   },
   "server-hoist-static-io": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "n/a",
-    "why": "n/a: per-request I/O needs route handlers or request-time server code, which a static export does not have. Elsewhere a machine can flag fs.readFile or fetch(new URL(..., import.meta.url)) with a literal path inside an exported handler; no enabled oxlint rule does."
+    "why": "n/a: per-request I/O needs route handlers or request-time server code, which a static export does not have. Elsewhere, whether a read inside a handler is static enough to hoist to module scope depends on whether the file can change while the server runs; most of the vendored examples are JSX fenced as typescript, which does not parse as a .ts file."
   },
   "server-no-shared-module-state": {
     "by": "oxlint",
@@ -408,10 +408,10 @@
     "why": "Server components still render at build time in a static export, where sequential fetches slow the build. Restructuring a tree so siblings fetch in parallel is a composition judgment."
   },
   "server-parallel-nested-fetching": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag a Promise.all over a .map of an earlier Promise.all's result; no enabled oxlint rule does."
+    "why": "Whether a Promise.all over an earlier Promise.all's results can be restructured so each item's nested fetch starts as soon as its parent resolves depends on what each fetch needs."
   },
   "server-serialization": {
     "by": "review",
@@ -432,10 +432,10 @@
     "why": "Whether a component is complex enough to split into compound components with shared context is a design judgment."
   },
   "patterns-children-over-render-props": {
-    "by": "custom",
+    "by": "review",
     "rule": null,
     "static_export": "applies",
-    "why": "A machine can flag render* props that take no arguments, which can be children instead; no enabled oxlint rule does. Render props that pass data back stay allowed."
+    "why": "Whether a render prop should become children depends on whether it passes data back and on the component's API, and the prop is usually declared in another file from where it is passed; render props that pass data back stay allowed."
   },
   "patterns-explicit-variants": {
     "by": "review",
@@ -445,9 +445,9 @@
   },
   "react19-no-forwardref": {
     "by": "custom",
-    "rule": null,
+    "rule": "quality-kit/react19-no-forwardref",
     "static_export": "applies",
-    "why": "A machine can flag forwardRef() and useContext() calls in a React 19 project; no enabled oxlint rule does."
+    "why": "quality-kit/react19-no-forwardref reports forwardRef() and useContext() calls, which React 19 replaces with ref as a prop and use() (verified on this rule's examples by ts/react-rules.test.sh)."
   },
   "state-context-interface": {
     "by": "review",

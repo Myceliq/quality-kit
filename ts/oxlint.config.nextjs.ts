@@ -36,6 +36,13 @@ try {
 // them too — otherwise a severity override would strip THEIR options, which is
 // the very bug `at()` exists to prevent.
 const local = {
+  // The kit's own rules for the `custom` rows of Vercel's React rules
+  // (quality-kit ts/react-rules/coverage.json), from the jsPlugins file below.
+  "quality-kit/async-parallel": "error",
+  "quality-kit/client-passive-event-listeners": "error",
+  "quality-kit/js-flatmap-filter": "error",
+  "quality-kit/react19-no-forwardref": "error",
+  "quality-kit/rerender-lazy-state-init": "error",
   // Keep the rule for `return undefined` / `x = undefined`, but stop it
   // stripping type-REQUIRED argument undefineds — e.g. Vitest 4's
   // `mockResolvedValue(undefined)`, where removing the arg is a type error.
@@ -93,6 +100,8 @@ export default defineConfig({
     ".quality-kit-src/**",
     ...(qk.ignoreOverrides ?? []),
   ],
+  // The kit's React-rules plugin, stamped beside this file.
+  jsPlugins: ["./oxlint-react-rules.mjs"],
   rules: {
     ...local,
     ...burnDown,
