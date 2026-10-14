@@ -18,6 +18,19 @@ err() { echo "DRIFT: $*" >&2; fail=1; }
 
 QK="$REPO/.quality-kit.json"
 [ -f "$QK" ] || { echo "DRIFT: missing .quality-kit.json — run quality-kit/bin/stamp.sh" >&2; exit 66; }
+# Validate the marker once, before anything reads it (#89): an unparseable file or one missing a
+# stamper-owned key is one named DRIFT line, not a KeyError/JSONDecodeError traceback from the
+# reads below and in the python pass. Only the first missing key, in this fixed order, is named.
+python3 - "$QK" <<'PY' || exit 66
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except ValueError:
+    sys.exit("DRIFT: .quality-kit.json is not valid JSON — run quality-kit/bin/stamp.sh")
+for k in ("version", "profile", "runner"):
+    if not isinstance(d, dict) or k not in d:
+        sys.exit(f"DRIFT: .quality-kit.json missing key '{k}' — run quality-kit/bin/stamp.sh")
+PY
 PROFILE="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['profile'])" "$QK")"
 PIN="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$QK")"
 KITV="$(cat "$KIT/VERSION")"
