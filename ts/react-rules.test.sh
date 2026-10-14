@@ -67,6 +67,22 @@ for k, r in sorted(rows.items()):
             print(f"{VALUES}|{k} is by oxlint but names no rule")
     elif r["rule"] is not None:
         print(f"{VALUES}|{k} is by {r['by']} but its rule is {r['rule']!r}, want null")
+for k in ("server-auth-actions", "async-api-routes"):
+    r = rows.get(k)
+    if isinstance(r, dict) and r.get("static_export") != "n/a":
+        print(f"{VALUES}|{k} is server-only, so static_export must be n/a")
+for k, r in sorted(rows.items()):
+    client = k.startswith(("rerender-", "client-")) or want.get(k, "").startswith("composition/")
+    if client and isinstance(r, dict) and r.get("static_export") != "applies":
+        print(f"{VALUES}|{k} runs in a static export, so static_export must be applies")
+w = rows.get("web-interface-guidelines")
+if isinstance(w, dict):
+    if w.get("by") != "review" or w.get("rule") is not None:
+        print(f"{VALUES}|web-interface-guidelines must be by review with a null rule")
+    why = str(w.get("why", "")).lower()
+    for s in ("keyboard", "autocomplete", "picture"):
+        if s not in why:
+            print(f"{VALUES}|web-interface-guidelines why must mention {s}")
 PY
   local list="$TMP/pinned.txt"
   python3 - "$d/SOURCE.json" >"$list" <<'PY' || { echo "$BYTES|SOURCE.json is unreadable"; return 0; }
@@ -122,6 +138,28 @@ fresh; printf 'x' >>"$T/composition/state-lift-state.md"
 caught "an edited byte is caught" "composition/state-lift-state.md"
 fresh; mutate 'rows["async-api-routes"]["why"] = "  "'
 caught "an empty why is caught" "async-api-routes"
+fresh; printf 'x' >>"$T/best-practices/_sections.md"
+caught "an edited scaffolding byte is caught" "best-practices/_sections.md"
+fresh; mutate 'rows["js-hoist-regexp"]["by"] = "oxlnt"'
+caught "an invalid by is caught" "js-hoist-regexp"
+
+pin="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["oxlint"])' "$KITROOT/ts/pins.json")"
+# version_guard BIN — FAIL unless BIN reports the pinned oxlint version.
+version_guard() {
+  local ver
+  ver="$("$1" --version 2>&1 || true)"
+  if ! grep -qxF "Version: $pin" <<<"$ver"; then
+    # A different oxlint resolves a different rule set, so nothing after this would mean anything.
+    bad "OXLINT_BIN is the pinned oxlint" "it reports '$ver', ts/pins.json pins oxlint $pin"
+    return 1
+  fi
+  ok "OXLINT_BIN is the pinned oxlint $pin"
+}
+printf '#!/usr/bin/env bash\necho "Version: 1.0.0"\n' >"$TMP/fake-oxlint"
+chmod +x "$TMP/fake-oxlint"
+rc=0; got="$(version_guard "$TMP/fake-oxlint")" || rc=$?
+if [ "$rc" != 0 ] && grep -q "^FAIL .*$pin" <<<"$got"; then ok "arm: a wrong oxlint version is refused"
+else bad "arm: a wrong oxlint version is refused" "rc=$rc out=$got"; fi
 
 # Every `oxlint` row must name a rule the nextjs profile resolves at error, read
 # from the pinned oxlint's own --print-config of the shipped config — never from
@@ -132,13 +170,9 @@ OXLINT="${OXLINT_BIN:-}"
 if [ -z "$OXLINT" ]; then
   echo "SKIP oxlint severity check (set OXLINT_BIN to the pinned oxlint whose node_modules has ultracite)"
 else
-  pin="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["oxlint"])' "$KITROOT/ts/pins.json")"
-  ver="$("$OXLINT" --version 2>&1 || true)"
-  if ! grep -qxF "Version: $pin" <<<"$ver"; then
-    # A different oxlint resolves a different rule set, so nothing below would mean anything.
-    bad "OXLINT_BIN is the pinned oxlint" "it reports '$ver', ts/pins.json pins oxlint $pin"
+  if ! version_guard "$OXLINT"; then
+    :
   else
-    ok "OXLINT_BIN is the pinned oxlint $pin"
     W="$TMP/oxlint"
     mkdir "$W"
     ln -s "$(cd "$(dirname "$OXLINT")/.." && pwd)" "$W/node_modules"
