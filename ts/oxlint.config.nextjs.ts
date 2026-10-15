@@ -65,8 +65,7 @@ const configured: Record<string, unknown> = {
 };
 // A predicate, not `Array.isArray` inline: narrowing an `unknown` with the
 // built-in yields `any[]`, and spreading that is an unsafe-assignment the fleet
-// ruleset counts against every stamped repo. This config is linted BY the repos
-// it is stamped into, so a violation here is charged to all of them.
+// ruleset flags. Stamped repos ignore this file; the kit lints it at the source.
 const isTuple = (v: unknown): v is unknown[] => Array.isArray(v);
 const at = (level: string, rule: string) => {
   const entry = configured[rule];
@@ -98,6 +97,14 @@ export default defineConfig({
     // burn-down count came out six higher than any local run could
     // reproduce, and a locally seeded baseline could never match CI.
     ".quality-kit-src/**",
+    // Same problem from the files the kit stamps beside this one: under
+    // --type-aware the untyped plugin and this config's two assertions raised
+    // 80 findings the stamper seeded into every fresh repo's burnDown. They are
+    // byte-owned, so the repo could never fix them; the kit's own
+    // oxlint-clean.test.sh lints them at the source instead. Ignoring the
+    // plugin does not stop jsPlugins below from loading it.
+    "/oxlint.config.ts",
+    "/oxlint-react-rules.mjs",
     ...(qk.ignoreOverrides ?? []),
   ],
   // The kit's React-rules plugin, stamped beside this file.
