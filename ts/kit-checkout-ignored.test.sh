@@ -30,6 +30,8 @@ for profile in nextjs vite node; do
   W="$(mktemp -d)"
   ln -s "$NM" "$W/node_modules"
   cp "$KITROOT/ts/oxlint.config.$profile.ts" "$W/oxlint.config.ts"
+  # stamped beside the nextjs config, which loads it
+  [ "$profile" != nextjs ] || cp "$KITROOT/ts/oxlint-react-rules.mjs" "$W/"
   cat > "$W/.quality-kit.json" <<'JSON'
 {"version":"0.4.1","profile":"node","runner":"npm","pendingFlags":[],
  "ruleOverrides":{"burnDown":{},"permanent":{}},"ignoreOverrides":[]}

@@ -49,6 +49,12 @@ R="$(fresh)"; echo "// weakened" >> "$R/oxlint.config.ts"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*oxlint.config.ts" && ok "edited stamped file caught" || bad "edited stamped file caught" "$out"
 
+# the nextjs config loads the kit's custom React rules from this stamped file
+R="$(fresh)"; printf 'x' >> "$R/oxlint-react-rules.mjs"
+rc=0; out="$(run "$R")" || rc=$?
+[ "$rc" != 0 ] && echo "$out" | grep -q "DRIFT.*oxlint-react-rules.mjs" \
+  && ok "edited stamped lint plugin caught" || bad "edited stamped lint plugin caught" "rc=$rc $out"
+
 # The kit stamps no Codex project hooks. A .codex/hooks.json left behind by an earlier stamp —
 # one that runs a stamped .quality/ hook script — is drift; a hooks file of the repo's own is
 # not, even when its hook is a script the repo keeps under .quality/.

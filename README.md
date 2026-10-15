@@ -352,14 +352,24 @@ never edited here.
   (keyed by its filename stem; the guidelines file is the single row
   `web-interface-guidelines`), with `by` set to `oxlint` (an oxlint rule the
   `nextjs` profile resolves at error catches the rule's incorrect example, named
-  in `rule`), `custom` (a machine could catch it, no enabled oxlint rule does)
-  or `review` (needs judgment), plus `static_export` (`n/a` only for rules that
-  cannot occur in a Next `output: "export"` build) and a `why`.
+  in `rule`), `custom` or `review` (needs judgment), plus `static_export` (`n/a`
+  only for rules that cannot occur in a Next `output: "export"` build) and a
+  `why`.
+- A **`custom`** row names, in `rule`, a quality-kit lint rule that the `nextjs` profile runs at error:
+  `quality-kit/<id>`, from the oxlint JS plugin
+  `ts/oxlint-react-rules.mjs`, which a nextjs stamp writes beside
+  `oxlint.config.ts` as `oxlint-react-rules.mjs` (byte-owned and drift-checked
+  like the config). A rule gets one only when it is decidable from one file and
+  its vendored examples prove it; anything else is `review`.
 - **`ts/react-rules.test.sh`** fails when a vendored rule file has no row or a
   row names no file, when any byte differs from `SOURCE.json`, or when a row's
   values are invalid; with `OXLINT_BIN` set to the pinned oxlint it also checks
-  every `oxlint` row against that oxlint's own `--print-config` of
-  `ts/oxlint.config.nextjs.ts`.
+  every `oxlint` and `custom` row's rule is at error for
+  `ts/oxlint.config.nextjs.ts` (oxlint's own `--print-config`, and for the
+  plugin rules, which `--print-config` omits, the severity oxlint reports for
+  them).
+- **`ts/react-rules.test.sh`** also lints each custom rule's vendored incorrect and correct examples:
+  every incorrect example must fail with that rule and every correct one pass.
 
 **Bumping to a new upstream commit** is an edit of `SOURCE.json` and
 `coverage.json`: replace the files with the new commit's bytes, update that
