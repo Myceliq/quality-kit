@@ -98,6 +98,14 @@ export default defineConfig({
     // burn-down count came out six higher than any local run could
     // reproduce, and a locally seeded baseline could never match CI.
     ".quality-kit-src/**",
+    // Same problem from the files the kit stamps beside this one: under
+    // --type-aware the untyped plugin and this config's two assertions raised
+    // 80 findings the stamper seeded into every fresh repo's burnDown. They are
+    // byte-owned, so the repo could never fix them; the kit's own
+    // oxlint-clean.test.sh lints them at the source instead. Ignoring the
+    // plugin does not stop jsPlugins below from loading it.
+    "/oxlint.config.ts",
+    "/oxlint-react-rules.mjs",
     ...(qk.ignoreOverrides ?? []),
   ],
   // The kit's React-rules plugin, stamped beside this file.

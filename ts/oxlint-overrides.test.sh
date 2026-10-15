@@ -60,7 +60,10 @@ d=json.loads(sys.stdin.read() or '{\"diagnostics\":[]}')
 print(sum(1 for x in d['diagnostics'] if x['code']=='eslint(func-style)'))" <<<"$out")"
 [ "$n" = 0 ] && ok "permanent off silences the rule" || bad "permanent off silences the rule" "count=$n"
 
-# ignoreOverrides must drop the file from the run entirely
+# ignoreOverrides must drop the file from the run entirely. The config ignores
+# the stamped oxlint.config.ts itself, so the repo needs one other source file —
+# with nothing left to lint oxlint prints no JSON at all.
+printf 'export const other = 1;\n' > "$W/other.ts"
 cat > "$W/.quality-kit.json" <<'JSON'
 {"version":"0.2.0","profile":"node","runner":"npm","pendingFlags":[],
  "ruleOverrides":{"burnDown":{},"permanent":{}},"ignoreOverrides":["probe.ts"]}

@@ -84,6 +84,11 @@ export default defineConfig({
     // burn-down count came out six higher than any local run could
     // reproduce, and a locally seeded baseline could never match CI.
     ".quality-kit-src/**",
+    // Same problem from this stamped file itself: under --type-aware its two
+    // assertions were seeded into every fresh repo's burnDown, though the repo
+    // may not edit it. The kit's own oxlint-clean.test.sh lints it at the
+    // source instead.
+    "/oxlint.config.ts",
     ...(qk.ignoreOverrides ?? []),
   ],
   rules: {
