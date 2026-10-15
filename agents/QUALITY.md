@@ -18,7 +18,8 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
 
 - Never edit stamped files (`.quality/`, `oxlint.config.ts`, `oxfmt.config.ts`,
   `tsconfig.quality.json`, `.github/workflows/quality.yml`;
-  python profile: `ruff.toml`, `pyrightconfig.json`, `Makefile.quality`).
+  python profile: `ruff.toml`, `pyrightconfig.json`, `Makefile.quality`;
+  nextjs profile: `oxlint-react-rules.mjs`).
   Change the kit at github.com/Myceliq/quality-kit and re-stamp instead.
 - Never add lint/type suppressions — including any oxlint disable /
   disable-line / disable-next-line comment, any TypeScript ts-expect-error or
