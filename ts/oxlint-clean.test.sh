@@ -71,76 +71,53 @@ print(1, len(diags),
       len([x for x in diags if name(x) in ('oxlint.config.ts', 'oxlint-react-rules.mjs')]),
       len([x for x in diags if name(x) == 'control.ts']))" <<<"$out"
 }
+# Usage: check <clean|probe> <label> <dir> <oxlint args...>. A clean run must
+# report nothing; its probed twin must report something, or the clean result
+# is satisfied by a run that linted nothing.
+check() {
+  local want="$1" label="$2"; shift 2
+  lint "$@"
+  read -r ran total _ _ <<<"$(tally)"
+  if [ "$ran" != 1 ]; then
+    bad "$label" "oxlint output was not valid JSON — likely a config load failure: $out"
+  elif [ "$want" = clean ] && { [ "$total" != 0 ] || [ "$rc" != 0 ]; }; then
+    bad "$label" "rc=$rc, $total diagnostic(s): $out"
+  elif [ "$want" = probe ] && [ "$total" -lt 1 ]; then
+    bad "$label" "a probed copy reported 0 diagnostics — the clean check proves nothing"
+  else
+    ok "$label"
+  fi
+}
 
 # node.ts doubles as the active oxlint.config.ts for this run (any of the three
 # would do — they extend the same core preset); the copies alongside it are
 # then linted as plain source files under that config, same as the other two.
 # The active copy itself is ignored by its own config; the named copies are not.
-configs_dir() {
-  mkdir "$1"
-  ln -s "$NM" "$1/node_modules"
-  cp "$DIR/oxlint.config.node.ts" "$1/oxlint.config.ts"
-  cp "$DIR/oxlint.config.nextjs.ts" "$DIR/oxlint.config.vite.ts" "$DIR/oxlint.config.node.ts" "$1/"
-}
-label="shipped TS configs are oxlint-clean"
-configs_dir "$T/configs"
-lint "$T/configs" .
-read -r ran total _ _ <<<"$(tally)"
-if [ "$ran" != 1 ]; then
-  bad "$label" "oxlint output was not valid JSON — likely a config load failure: $out"
-elif [ "$total" != 0 ]; then
-  bad "$label" "$total diagnostic(s): $out"
-else
-  ok "$label"
-fi
-# Positive control: the same run with a probe in one config copy must report
-# it, or the clean result above is satisfied by a run that linted nothing.
-configs_dir "$T/configs-probe"
-printf "$PROBE" >> "$T/configs-probe/oxlint.config.vite.ts"
-lint "$T/configs-probe" .
-read -r ran total _ _ <<<"$(tally)"
-if [ "$ran" != 1 ]; then
-  bad "$label (positive control)" "oxlint output was not valid JSON — likely a config load failure: $out"
-elif [ "$total" -lt 1 ]; then
-  bad "$label (positive control)" "a probed config copy reported 0 diagnostics — the clean check proves nothing"
-else
-  ok "$label (positive control: probed copy reported)"
-fi
+C="$T/configs"
+mkdir "$C"
+ln -s "$NM" "$C/node_modules"
+cp "$DIR/oxlint.config.node.ts" "$C/oxlint.config.ts"
+cp "$DIR/oxlint.config.nextjs.ts" "$DIR/oxlint.config.vite.ts" "$DIR/oxlint.config.node.ts" "$C/"
+cp -R "$C" "$C-probe"
+printf "$PROBE" >> "$C-probe/oxlint.config.vite.ts"
+check clean "shipped TS configs are oxlint-clean" "$C" .
+check probe "shipped TS configs are oxlint-clean (positive control)" "$C-probe" .
 
 # The nextjs profile also stamps its React-rules plugin, which every nextjs repo
 # then lints as its own source under the nextjs config — the same deadlock as
 # above if it carried a single violation. The config ignores the stamped name,
 # so the plugin is linted as a copy under another name; the stamped one stays
 # beside the config only so jsPlugins can load it.
-plugin_dir() {
-  mkdir "$1"
-  ln -s "$NM" "$1/node_modules"
-  cp "$DIR/oxlint.config.nextjs.ts" "$1/oxlint.config.ts"
-  cp "$DIR/oxlint-react-rules.mjs" "$1/"
-  cp "$DIR/oxlint-react-rules.mjs" "$1/plugin-under-test.mjs"
-}
-label="shipped lint plugin is oxlint-clean under the nextjs config"
-plugin_dir "$T/plugin"
-lint "$T/plugin" plugin-under-test.mjs
-read -r ran total _ _ <<<"$(tally)"
-if [ "$ran" != 1 ]; then
-  bad "$label" "oxlint output was not valid JSON — likely a config load failure: $out"
-elif [ "$total" != 0 ] || [ "$rc" != 0 ]; then
-  bad "$label" "rc=$rc, $total diagnostic(s): $out"
-else
-  ok "$label"
-fi
-plugin_dir "$T/plugin-probe"
-printf "$PROBE" >> "$T/plugin-probe/plugin-under-test.mjs"
-lint "$T/plugin-probe" plugin-under-test.mjs
-read -r ran total _ _ <<<"$(tally)"
-if [ "$ran" != 1 ]; then
-  bad "$label (positive control)" "oxlint output was not valid JSON — likely a config load failure: $out"
-elif [ "$total" -lt 1 ]; then
-  bad "$label (positive control)" "a probed plugin copy reported 0 diagnostics — the clean check proves nothing"
-else
-  ok "$label (positive control: probed copy reported)"
-fi
+P="$T/plugin"
+mkdir "$P"
+ln -s "$NM" "$P/node_modules"
+cp "$DIR/oxlint.config.nextjs.ts" "$P/oxlint.config.ts"
+cp "$DIR/oxlint-react-rules.mjs" "$P/"
+cp "$DIR/oxlint-react-rules.mjs" "$P/plugin-under-test.mjs"
+cp -R "$P" "$P-probe"
+printf "$PROBE" >> "$P-probe/plugin-under-test.mjs"
+check clean "shipped lint plugin is oxlint-clean under the nextjs config" "$P" plugin-under-test.mjs
+check probe "shipped lint plugin is oxlint-clean under the nextjs config (positive control)" "$P-probe" plugin-under-test.mjs
 
 # A stamped repo's own lint run must never report the kit's stamped files — with
 # or without --type-aware — while still linting repo code. Each stamped file
