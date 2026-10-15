@@ -54,8 +54,7 @@ const configured: Record<string, unknown> = {
 };
 // A predicate, not `Array.isArray` inline: narrowing an `unknown` with the
 // built-in yields `any[]`, and spreading that is an unsafe-assignment the fleet
-// ruleset counts against every stamped repo. This config is linted BY the repos
-// it is stamped into, so a violation here is charged to all of them.
+// ruleset flags. Stamped repos ignore this file; the kit lints it at the source.
 const isTuple = (v: unknown): v is unknown[] => Array.isArray(v);
 const at = (level: string, rule: string) => {
   const entry = configured[rule];

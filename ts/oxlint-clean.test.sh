@@ -119,9 +119,10 @@ printf "$PROBE" >> "$P-probe/plugin-under-test.mjs"
 check clean "shipped lint plugin is oxlint-clean under the nextjs config" "$P" plugin-under-test.mjs
 check probe "shipped lint plugin is oxlint-clean under the nextjs config (positive control)" "$P-probe" plugin-under-test.mjs
 
-# A stamped repo's own lint run must never report the kit's stamped files — with
-# or without --type-aware — while still linting repo code. Each stamped file
-# carries the probe; control.ts carries it too and must be reported.
+# A stamped repo's own lint run must never report the kit's stamped files while
+# still linting repo code. Only the default (non-type-aware) run is checked here;
+# ignorePatterns are path-based, so it should hold under --type-aware too. Each
+# stamped file carries the probe; control.ts carries it too and must be reported.
 for profile in nextjs node vite; do
   S="$T/stamp-$profile"
   mkdir "$S"
