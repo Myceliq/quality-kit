@@ -182,7 +182,7 @@ import json, sys
 path, add = sys.argv[1], json.loads(sys.argv[2])
 if len(sys.argv) > 3:
     recount = json.loads(sys.argv[3])
-    add = {r: recount[r] for r in sorted(add) if recount.get(r, 0) > 0}
+    add = {r: recount[r] for r in add if recount.get(r, 0) > 0}
 d = json.load(open(path))
 burn = d.setdefault("ruleOverrides", {}).setdefault("burnDown", {})
 new = {r: n for r, n in sorted(add.items()) if r not in burn}
@@ -198,8 +198,7 @@ PY
       cp "$CONSUMER_DIR/.quality-kit.json" "$WORK/quality-kit.json.pre-seed"
       NEW="$(seed_burn "$ERRS")"
       if [ "$NEW" != "{}" ]; then
-        SEL="$(python3 -c 'import json,sys; print(",".join(sorted(json.loads(sys.argv[1]))))' "$NEW")"
-        RECOUNT="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR" --select "$SEL")" || BR_RC=$?
+        RECOUNT="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR")" || BR_RC=$?
         # back to the pre-seed ledger: the discovery counts are what the recount replaces
         cp "$WORK/quality-kit.json.pre-seed" "$CONSUMER_DIR/.quality-kit.json"
         if [ "$BR_RC" = 0 ]; then seed_burn "$NEW" "$RECOUNT" >/dev/null; fi
