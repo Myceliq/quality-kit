@@ -319,7 +319,9 @@ PY
   # other jsPlugins rules on (measured, oxlint 1.74.0). An incorrect example
   # passes only on a non-zero exit WITH its rule in the output, so one that merely
   # fails to parse is not counted as the rule firing. "on 1 file with 1 rules" is
-  # oxlint's own summary: the file was linted and nothing but the rule ran.
+  # oxlint's own summary: the file was linted and nothing but the rule ran. Any
+  # agent variable switches oxlint to a compact format with no summary line
+  # (measured, oxlint 1.74.0), so the lint runs with all of them unset.
   fixtures() {
     local id kind num rule file rc out
     while read -r id kind num rule file; do
@@ -328,7 +330,8 @@ import json, sys
 print(json.dumps({"jsPlugins": ["./oxlint-react-rules.mjs"], "plugins": [],
                   "categories": {"correctness": "off"}, "rules": {sys.argv[1]: "error"}}))
 PY
-      rc=0; out="$(cd "$W" && "$OXLINT" -c only.json "$file" 2>&1)" || rc=$?
+      rc=0; out="$(cd "$W" && env -u AI_AGENT -u CLAUDECODE -u CLAUDE_CODE -u CODEX_SANDBOX \
+        -u CODEX_THREAD_ID -u GEMINI_CLI -u CURSOR_AGENT "$OXLINT" -c only.json "$file" 2>&1)" || rc=$?
       if ! grep -qF "on 1 file with 1 rules" <<<"$out"; then
         echo "bad|fixture: $id $kind $num|oxlint did not lint the file with $rule alone (rc=$rc): ${out//$'\n'/ }"
       elif [ "$kind" = incorrect ] && { [ "$rc" = 0 ] || ! grep -qF -- "$rule" <<<"$out"; }; then
@@ -343,6 +346,14 @@ PY
   while IFS='|' read -r st label detail; do
     if [ "$st" = ok ]; then ok "$label"; else bad "$label" "$detail"; fi
   done < <(fixtures "$W/fx.list")
+
+  # CI runs without agent variables, so this row sets them all and runs the same
+  # fixture check: every js-flatmap-filter row must still pass.
+  AGENT="fixture lint ignores an agent environment"
+  python3 "$TMP/examples.py" "$RULES" "$W/fx-agent" js-flatmap-filter >"$W/fx-agent.list"
+  got="$(export AI_AGENT=1 CLAUDECODE=1 CLAUDE_CODE=1 CODEX_SANDBOX=1 CODEX_THREAD_ID=1 GEMINI_CLI=1 CURSOR_AGENT=1
+    fixtures "$W/fx-agent.list")"
+  if [ -n "$got" ] && ! grep -qv '^ok|' <<<"$got"; then ok "$AGENT"; else bad "$AGENT" "${got//$'\n'/ }"; fi
 
   # fixture_arm LABEL PY — on a fresh copy, PY rewrites `text`, the copy of
   # best-practices/js-flatmap-filter.md, given its extracted examples `ex`; the
