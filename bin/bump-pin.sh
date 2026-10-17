@@ -132,6 +132,7 @@ if [ -n "$PY_PIN" ]; then
 fi
 
 CONSUMER_DIR="$WORK/repo"
+INSTALLED=0  # set when the seed step below installs the consumer's deps
 gh repo clone "$CONSUMER" "$CONSUMER_DIR"
 
 if [ -n "$PY_PIN" ]; then
@@ -200,6 +201,7 @@ PY
     # from the consumer's tree run here. A failed install falls through to
     # baseline-rules.sh's exit 3 below; no lockfile → no install, same.
     if [ ! -d "$CONSUMER_DIR/node_modules" ]; then
+      INSTALLED=1
       case "$(bash "$KIT/bin/detect-manager.sh" "$CONSUMER_DIR")" in
         npm)  (cd "$CONSUMER_DIR" && npm ci --ignore-scripts --no-audit --no-fund) >&2 || true ;;
         pnpm) (cd "$CONSUMER_DIR" && pnpm install --frozen-lockfile --ignore-scripts) >&2 || true ;;
@@ -223,9 +225,13 @@ PY
 fi
 
 git -C "$CONSUMER_DIR" checkout -q -b "$BRANCH"
-# node_modules excluded: the install above must never ride into the bump commit,
-# even in a consumer that doesn't gitignore it.
-git -C "$CONSUMER_DIR" add -A -- . ':(exclude)node_modules'
+git -C "$CONSUMER_DIR" add -A
+# The seed step's install must never ride into the bump commit, even in a
+# consumer that doesn't gitignore node_modules. Unstaged after the fact, not
+# excluded by pathspec: naming an ignored path in `git add` is an error (exit 1).
+# Only when this run installed it: the clone had no node_modules then, so
+# nothing tracked is touched, and a consumer's tracked one is left alone.
+[ "$INSTALLED" = 0 ] || git -C "$CONSUMER_DIR" rm -r -q --cached --ignore-unmatch -- node_modules
 git -C "$CONSUMER_DIR" \
   -c user.name="quality-kit-bot" -c user.email="quality-kit-bot@users.noreply.github.com" \
   commit -q -m "chore(quality-kit): bump pin $PIN_VERSION -> $LATEST_VERSION"

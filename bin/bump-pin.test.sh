@@ -403,6 +403,10 @@ run_qk_case "$HOOKS_BLOCKING" "$QK_SRC" \
 burn="$(pushed_burn)"
 [ "$burn" = '{"no-console": 3, "quality-kit/async-parallel": 58}' ] \
   && ok "the bump commit seeds async-parallel into burnDown" || bad "the bump commit seeds async-parallel into burnDown" "burnDown=$burn"
+# This consumer TRACKS node_modules (its oxlint stand-in): no install ran, so
+# the bump commit must leave it alone rather than unstage it into a deletion.
+[ -n "$(bumped node_modules/.bin/oxlint)" ] \
+  && ok "a tracked node_modules survives the bump" || bad "a tracked node_modules survives the bump" "deleted on the bump branch"
 # --- existing ledger entries and warning-only rules are left alone ----------
 python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1])["no-console"] == 3 else 1)' "$burn" 2>/dev/null \
   && ok "an existing ledger entry keeps its count" || bad "an existing ledger entry keeps its count" "burnDown=$burn"
@@ -441,27 +445,32 @@ burn="$(pushed_burn)"
 # The real failure (booking-platform, after #99): `gh repo clone` brings no
 # node_modules, baseline-rules.sh exits 3, nothing seeds, and the hook — which
 # installs the deps itself — blocks the commit on the 58 errors. This consumer
-# has a lockfile and no node_modules, and is not gitignoring it; only `npm ci`
-# provides the linter, so a seeded ledger proves the install ran first.
-QK_NODEPS_SRC="$WORKROOT/consumer-qk-nodeps-src"
-mkdir -p "$QK_NODEPS_SRC"
-cp "$QK_NOLINT_SRC/.quality-kit.json" "$QK_NOLINT_SRC/package.json" "$QK_NODEPS_SRC/"
-echo '{"lockfileVersion":3}' > "$QK_NODEPS_SRC/package-lock.json"
-(cd "$QK_NODEPS_SRC" && "$REAL_GIT" init -q -b main && "$REAL_GIT" config core.hooksPath /dev/null \
-  && "$REAL_GIT" add -A && "$REAL_GIT" -c user.name=t -c user.email=t@t commit -q -m init)
-export NPM_CI_OXLINT="$QK_SRC/node_modules/.bin/oxlint"
-run_qk_case "$HOOKS_BLOCKING" "$QK_NODEPS_SRC" \
-  "quality-kit(async-parallel) quality-kit/async-parallel 58 error 58 warning"
-unset NPM_CI_OXLINT
-[ "$CASE_RC" = 0 ] && pr_draft_opened \
-  && ok "a clone without node_modules installs, seeds, and opens the draft PR" \
-  || bad "a clone without node_modules installs, seeds, and opens the draft PR" "rc=$CASE_RC out=$CASE_OUT log: $(cat "$CASE_LOG")"
-grep -qx "npm ci --ignore-scripts --no-audit --no-fund" "$CASE_LOG" \
-  && ok "the seed step ran npm ci without lifecycle scripts" || bad "the seed step ran npm ci without lifecycle scripts" "log: $(cat "$CASE_LOG")"
-burn="$(pushed_burn)"
-[ "$burn" = '{"no-console": 3, "quality-kit/async-parallel": 58}' ] \
-  && ok "the installed linter's errors are seeded" || bad "the installed linter's errors are seeded" "burnDown=$burn"
-[ -z "$(bumped node_modules/.bin/oxlint)" ] \
-  && ok "the install is not committed" || bad "the install is not committed" "node_modules landed on the bump branch"
+# has a lockfile and no node_modules; only `npm ci` provides the linter, so a
+# seeded ledger proves the install ran first. Twice: gitignoring node_modules
+# (booking-platform's shape) and not, where the install must still stay out.
+for ignored in 1 0; do
+  QK_NODEPS_SRC="$WORKROOT/consumer-qk-nodeps-src-$ignored"
+  mkdir -p "$QK_NODEPS_SRC"
+  cp "$QK_NOLINT_SRC/.quality-kit.json" "$QK_NOLINT_SRC/package.json" "$QK_NODEPS_SRC/"
+  echo '{"lockfileVersion":3}' > "$QK_NODEPS_SRC/package-lock.json"
+  [ "$ignored" = 0 ] || echo node_modules > "$QK_NODEPS_SRC/.gitignore"
+  (cd "$QK_NODEPS_SRC" && "$REAL_GIT" init -q -b main && "$REAL_GIT" config core.hooksPath /dev/null \
+    && "$REAL_GIT" add -A && "$REAL_GIT" -c user.name=t -c user.email=t@t commit -q -m init)
+  export NPM_CI_OXLINT="$QK_SRC/node_modules/.bin/oxlint"
+  run_qk_case "$HOOKS_BLOCKING" "$QK_NODEPS_SRC" \
+    "quality-kit(async-parallel) quality-kit/async-parallel 58 error 58 warning"
+  unset NPM_CI_OXLINT
+  t="(node_modules gitignored=$ignored)"
+  [ "$CASE_RC" = 0 ] && pr_draft_opened \
+    && ok "a clone without node_modules installs, seeds, and opens the draft PR $t" \
+    || bad "a clone without node_modules installs, seeds, and opens the draft PR $t" "rc=$CASE_RC out=$CASE_OUT log: $(cat "$CASE_LOG")"
+  grep -qx "npm ci --ignore-scripts --no-audit --no-fund" "$CASE_LOG" \
+    && ok "the seed step ran npm ci without lifecycle scripts $t" || bad "the seed step ran npm ci without lifecycle scripts $t" "log: $(cat "$CASE_LOG")"
+  burn="$(pushed_burn)"
+  [ "$burn" = '{"no-console": 3, "quality-kit/async-parallel": 58}' ] \
+    && ok "the installed linter's errors are seeded $t" || bad "the installed linter's errors are seeded $t" "burnDown=$burn"
+  [ -z "$(bumped node_modules/.bin/oxlint)" ] \
+    && ok "the install is not committed $t" || bad "the install is not committed $t" "node_modules landed on the bump branch"
+done
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
