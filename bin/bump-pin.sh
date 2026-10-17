@@ -192,6 +192,19 @@ if new:
 print(json.dumps(new))
 PY
     }
+    # A fresh clone has no node_modules, so baseline-rules.sh can't find oxlint
+    # and exits 3 — the step never seeded in real use, and the commit hook then
+    # installed the deps itself and failed on the unseeded errors. Install with
+    # the consumer's own manager first (stamp.sh already refused anything else),
+    # --ignore-scripts as the box's pre-commit hook does: no lifecycle scripts
+    # from the consumer's tree run here. A failed install falls through to
+    # baseline-rules.sh's exit 3 below; no lockfile → no install, same.
+    if [ ! -d "$CONSUMER_DIR/node_modules" ]; then
+      case "$(bash "$KIT/bin/detect-manager.sh" "$CONSUMER_DIR")" in
+        npm)  (cd "$CONSUMER_DIR" && npm ci --ignore-scripts --no-audit --no-fund) >&2 || true ;;
+        pnpm) (cd "$CONSUMER_DIR" && pnpm install --frozen-lockfile --ignore-scripts) >&2 || true ;;
+      esac
+    fi
     BR_RC=0
     ERRS="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR" --errors)" || BR_RC=$?
     if [ "$BR_RC" = 0 ]; then
@@ -210,7 +223,9 @@ PY
 fi
 
 git -C "$CONSUMER_DIR" checkout -q -b "$BRANCH"
-git -C "$CONSUMER_DIR" add -A
+# node_modules excluded: the install above must never ride into the bump commit,
+# even in a consumer that doesn't gitignore it.
+git -C "$CONSUMER_DIR" add -A -- . ':(exclude)node_modules'
 git -C "$CONSUMER_DIR" \
   -c user.name="quality-kit-bot" -c user.email="quality-kit-bot@users.noreply.github.com" \
   commit -q -m "chore(quality-kit): bump pin $PIN_VERSION -> $LATEST_VERSION"

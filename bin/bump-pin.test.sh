@@ -43,6 +43,8 @@ cp "$BP" "$KIT_FIXTURE/bin/bump-pin.sh"
 # The real counter, not a fake: burn-down seeding must count and normalise rule
 # names exactly as the consumer's ratchet will.
 cp "$DIR/baseline-rules.sh" "$KIT_FIXTURE/bin/baseline-rules.sh"
+# Real too: the seed step installs the consumer's deps with the manager it detects.
+cp "$DIR/detect-manager.sh" "$KIT_FIXTURE/bin/detect-manager.sh"
 (cd "$KIT_FIXTURE" && "$REAL_GIT" init -q -b main \
   && "$REAL_GIT" config core.hooksPath /dev/null \
   && "$REAL_GIT" add -A \
@@ -154,6 +156,22 @@ case "\$1" in
 esac
 EOF
 chmod +x "$STUBBIN/gh"
+
+# npm: `ci` logs itself and, given a lockfile, "installs" the oxlint stand-in
+# from $NPM_CI_OXLINT (refusing without one, as real npm ci does); every other
+# subcommand is the real npm, so lint scripts still run through it.
+REAL_NPM="$(command -v npm)"
+cat > "$STUBBIN/npm" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = ci ]; then
+  echo "npm \$*" >> "\$STUB_LOG"
+  [ -f package-lock.json ] && [ -n "\${NPM_CI_OXLINT:-}" ] || exit 1
+  mkdir -p node_modules/.bin && cp "\$NPM_CI_OXLINT" node_modules/.bin/oxlint
+  exit 0
+fi
+exec "$REAL_NPM" "\$@"
+EOF
+chmod +x "$STUBBIN/npm"
 
 # CASE_OUT / CASE_RC / CASE_LOG / CASE_CONSUMER_BARE are set by run_case.
 CASE_OUT="" CASE_RC=0 CASE_LOG="" CASE_CONSUMER_BARE=""
@@ -418,5 +436,32 @@ grep -qF "bump-pin: not seeding burn-down (baseline-rules.sh exit 3)" <<<"$CASE_
 burn="$(pushed_burn)"
 [ "$burn" = '{"no-console": 3}' ] \
   && ok "uncountable findings leave the ledger unchanged" || bad "uncountable findings leave the ledger unchanged" "burnDown=$burn"
+
+# --- a fresh clone has no node_modules: install, THEN seed --------------------
+# The real failure (booking-platform, after #99): `gh repo clone` brings no
+# node_modules, baseline-rules.sh exits 3, nothing seeds, and the hook — which
+# installs the deps itself — blocks the commit on the 58 errors. This consumer
+# has a lockfile and no node_modules, and is not gitignoring it; only `npm ci`
+# provides the linter, so a seeded ledger proves the install ran first.
+QK_NODEPS_SRC="$WORKROOT/consumer-qk-nodeps-src"
+mkdir -p "$QK_NODEPS_SRC"
+cp "$QK_NOLINT_SRC/.quality-kit.json" "$QK_NOLINT_SRC/package.json" "$QK_NODEPS_SRC/"
+echo '{"lockfileVersion":3}' > "$QK_NODEPS_SRC/package-lock.json"
+(cd "$QK_NODEPS_SRC" && "$REAL_GIT" init -q -b main && "$REAL_GIT" config core.hooksPath /dev/null \
+  && "$REAL_GIT" add -A && "$REAL_GIT" -c user.name=t -c user.email=t@t commit -q -m init)
+export NPM_CI_OXLINT="$QK_SRC/node_modules/.bin/oxlint"
+run_qk_case "$HOOKS_BLOCKING" "$QK_NODEPS_SRC" \
+  "quality-kit(async-parallel) quality-kit/async-parallel 58 error 58 warning"
+unset NPM_CI_OXLINT
+[ "$CASE_RC" = 0 ] && pr_draft_opened \
+  && ok "a clone without node_modules installs, seeds, and opens the draft PR" \
+  || bad "a clone without node_modules installs, seeds, and opens the draft PR" "rc=$CASE_RC out=$CASE_OUT log: $(cat "$CASE_LOG")"
+grep -qx "npm ci --ignore-scripts --no-audit --no-fund" "$CASE_LOG" \
+  && ok "the seed step ran npm ci without lifecycle scripts" || bad "the seed step ran npm ci without lifecycle scripts" "log: $(cat "$CASE_LOG")"
+burn="$(pushed_burn)"
+[ "$burn" = '{"no-console": 3, "quality-kit/async-parallel": 58}' ] \
+  && ok "the installed linter's errors are seeded" || bad "the installed linter's errors are seeded" "burnDown=$burn"
+[ -z "$(bumped node_modules/.bin/oxlint)" ] \
+  && ok "the install is not committed" || bad "the install is not committed" "node_modules landed on the bump branch"
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
