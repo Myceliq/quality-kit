@@ -105,4 +105,25 @@ for p in node nextjs vite; do
     && ok "corrupt .quality-kit.json is a config-load error ($p)" || bad "corrupt .quality-kit.json is a config-load error ($p)" "rc=$rc $out"
 done
 
+# A ledgered kit React rule must lint at warn even though the nextjs config sets
+# it to "error" in `local`: bump-pin.sh seeds these rules into burnDown so a
+# consumer's own hook accepts the bump commit, and that only works while
+# burnDown is spread after `local`.
+N="$(mktemp -d)"
+ln -s "$NM" "$N/node_modules"
+cp "$KITROOT/ts/oxlint.config.nextjs.ts" "$N/oxlint.config.ts"
+cp "$KITROOT/ts/oxlint-react-rules.mjs" "$N/"
+printf 'export async function f(a: () => Promise<number>, b: () => Promise<number>) { const x = await a(); const y = await b(); return x + y; }\n' > "$N/probe.ts"
+for burn in '{"quality-kit/async-parallel":1}|warning' '{}|error'; do
+  printf '{"version":"0.7.1","profile":"nextjs","runner":"npm","pendingFlags":[],"ruleOverrides":{"burnDown":%s,"permanent":{}},"ignoreOverrides":[]}\n' \
+    "${burn%|*}" > "$N/.quality-kit.json"
+  out="$(cd "$N" && "$OXLINT" -f json probe.ts 2>/dev/null || true)"
+  sev="$(python3 -c "
+import json,sys
+d=json.loads(sys.stdin.read() or '{\"diagnostics\":[]}')
+print(','.join(sorted({x['severity'] for x in d['diagnostics'] if x['code']=='quality-kit(async-parallel)'})) or 'none')" <<<"$out")"
+  [ "$sev" = "${burn#*|}" ] && ok "nextjs async-parallel with burnDown ${burn%|*} reports at ${burn#*|}" \
+    || bad "nextjs async-parallel with burnDown ${burn%|*} reports at ${burn#*|}" "severity=$sev"
+done
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

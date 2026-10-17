@@ -157,6 +157,56 @@ PY
 else
   bash "$KITSRC/bin/stamp.sh" "$CONSUMER_DIR" --profile "$PIN_PROFILE"
   BODY="Bumps the quality-kit pin from $PIN_VERSION to $LATEST_VERSION."
+
+  # --- seed the burn-down for findings that would block the bump commit -----
+  # stamp.sh seeds the ledger only while it is empty, so a consumer that already
+  # has one never gets entries for rules a newer kit ships at `error` (the kit's
+  # own quality-kit/* rules). Their pre-existing hits then fail the consumer's
+  # own pre-commit validate:fast, the commit below is refused, and no PR opens
+  # (booking-platform, #98). So add each error-severity rule the ledger lacks,
+  # at the count the ratchet will take with it ledgered (two passes, as in
+  # stamp.sh: a ledgered TS rule lints at warn, so warning-exempt scopes drop
+  # out), dropping any that recount measures at 0 (the ratchet's "complete").
+  # Existing entries are never touched: absorbing new violations of a ledgered
+  # rule is exactly what the ratchet forbids. Can't count → leave the ledger
+  # alone and say so; the consumer's own hook stays the gate.
+  # $KIT, not $KITSRC: --errors is this checkout's flag; an older tag lacks it.
+  # ponytail: TS profiles only. Python's ledger is rendered into ruff.toml,
+  # which the manifest hashes, so seeding it here would need stamp.sh's render
+  # and re-hash; there, ledger the rule and re-stamp by hand.
+  if [ "$PIN_PROFILE" != python ]; then
+    # seed_burn <rules> [<recount>]: add <rules> the ledger lacks, at the
+    # recount's number when given (dropping any it counts 0); prints what it added.
+    seed_burn() { python3 - "$CONSUMER_DIR/.quality-kit.json" "$@" <<'PY'
+import json, sys
+path, add = sys.argv[1], json.loads(sys.argv[2])
+if len(sys.argv) > 3:
+    recount = json.loads(sys.argv[3])
+    add = {r: recount[r] for r in add if recount.get(r, 0) > 0}
+d = json.load(open(path))
+burn = d.setdefault("ruleOverrides", {}).setdefault("burnDown", {})
+new = {r: n for r, n in sorted(add.items()) if r not in burn}
+if new:
+    burn.update(new)
+    open(path, "w").write(json.dumps(d, indent=2) + "\n")
+print(json.dumps(new))
+PY
+    }
+    BR_RC=0
+    ERRS="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR" --errors)" || BR_RC=$?
+    if [ "$BR_RC" = 0 ]; then
+      cp "$CONSUMER_DIR/.quality-kit.json" "$WORK/quality-kit.json.pre-seed"
+      NEW="$(seed_burn "$ERRS")"
+      if [ "$NEW" != "{}" ]; then
+        RECOUNT="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR")" || BR_RC=$?
+        # back to the pre-seed ledger: the discovery counts are what the recount replaces
+        cp "$WORK/quality-kit.json.pre-seed" "$CONSUMER_DIR/.quality-kit.json"
+        if [ "$BR_RC" = 0 ]; then seed_burn "$NEW" "$RECOUNT" >/dev/null; fi
+      fi
+    fi
+    [ "$BR_RC" = 0 ] \
+      || echo "bump-pin: not seeding burn-down (baseline-rules.sh exit $BR_RC) — the consumer's own commit hook stays the gate" >&2
+  fi
 fi
 
 git -C "$CONSUMER_DIR" checkout -q -b "$BRANCH"
