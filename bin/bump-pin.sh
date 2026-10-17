@@ -223,9 +223,11 @@ PY
 fi
 
 git -C "$CONSUMER_DIR" checkout -q -b "$BRANCH"
-# node_modules excluded: the install above must never ride into the bump commit,
-# even in a consumer that doesn't gitignore it.
-git -C "$CONSUMER_DIR" add -A -- . ':(exclude)node_modules'
+git -C "$CONSUMER_DIR" add -A
+# The install above must never ride into the bump commit, even in a consumer
+# that doesn't gitignore node_modules. Unstaged after the fact, not excluded by
+# pathspec: naming an ignored path in `git add` is an error (exit 1).
+git -C "$CONSUMER_DIR" rm -r -q --cached --ignore-unmatch -- node_modules
 git -C "$CONSUMER_DIR" \
   -c user.name="quality-kit-bot" -c user.email="quality-kit-bot@users.noreply.github.com" \
   commit -q -m "chore(quality-kit): bump pin $PIN_VERSION -> $LATEST_VERSION"
