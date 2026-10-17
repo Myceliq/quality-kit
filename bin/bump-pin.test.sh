@@ -403,6 +403,10 @@ run_qk_case "$HOOKS_BLOCKING" "$QK_SRC" \
 burn="$(pushed_burn)"
 [ "$burn" = '{"no-console": 3, "quality-kit/async-parallel": 58}' ] \
   && ok "the bump commit seeds async-parallel into burnDown" || bad "the bump commit seeds async-parallel into burnDown" "burnDown=$burn"
+# This consumer TRACKS node_modules (its oxlint stand-in): no install ran, so
+# the bump commit must leave it alone rather than unstage it into a deletion.
+[ -n "$(bumped node_modules/.bin/oxlint)" ] \
+  && ok "a tracked node_modules survives the bump" || bad "a tracked node_modules survives the bump" "deleted on the bump branch"
 # --- existing ledger entries and warning-only rules are left alone ----------
 python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1])["no-console"] == 3 else 1)' "$burn" 2>/dev/null \
   && ok "an existing ledger entry keeps its count" || bad "an existing ledger entry keeps its count" "burnDown=$burn"
