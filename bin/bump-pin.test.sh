@@ -40,6 +40,9 @@ echo 9.9.9 > "$KIT_FIXTURE/VERSION"
 # with an origin — whatever state this checkout's own .git is in (a worktree's
 # .git points at admin state outside the worktree, which may not be present).
 cp "$BP" "$KIT_FIXTURE/bin/bump-pin.sh"
+# The real counter, not a fake: burn-down seeding must count and normalise rule
+# names exactly as the consumer's ratchet will.
+cp "$DIR/baseline-rules.sh" "$KIT_FIXTURE/bin/baseline-rules.sh"
 (cd "$KIT_FIXTURE" && "$REAL_GIT" init -q -b main \
   && "$REAL_GIT" config core.hooksPath /dev/null \
   && "$REAL_GIT" add -A \
@@ -140,7 +143,9 @@ case "\$1" in
         echo "gh \$*" >> "\$STUB_LOG"
         dest="\$4"
         "\$REAL_GIT" clone --quiet "\$CONSUMER_SRC_BARE" "\$dest"
-        "\$REAL_GIT" -C "\$dest" config core.hooksPath /dev/null
+        # An isolated global config (the burn-down cases) carries the hooks
+        # the clone must run; a local /dev/null would override them.
+        [ -n "\${GIT_CONFIG_GLOBAL:-}" ] || "\$REAL_GIT" -C "\$dest" config core.hooksPath /dev/null
         ;;
       *) echo "gh repo: unhandled \$2" >&2; exit 1 ;;
     esac
@@ -154,7 +159,9 @@ chmod +x "$STUBBIN/gh"
 CASE_OUT="" CASE_RC=0 CASE_LOG="" CASE_CONSUMER_BARE=""
 # Any further args go to bump-pin.sh before the consumer (e.g. --py-pin src/pin.py).
 # CASE_KIT picks the kit fixture the stubbed clone serves; STAMP_FAIL (exported
-# by the caller) names a profile the fake stamp.sh refuses.
+# by the caller) names a profile the fake stamp.sh refuses. CASE_SRC picks the
+# consumer repo the clone serves, and CASE_PIN_JSON the .quality-kit.json the
+# contents API serves (default: just the version and profile args).
 run_case() { # pin_version pin_profile open_prs branch_exists [bump-pin args...]
   local pin_version="$1" pin_profile="$2" open_prs="$3" branch_exists="$4"
   shift 4
@@ -163,10 +170,10 @@ run_case() { # pin_version pin_profile open_prs branch_exists [bump-pin args...]
   # leaking one mktemp -d per run_case call.
   CASE_LOG="$(mktemp "$WORKROOT/case-XXXXXX.log")"
   CASE_CONSUMER_BARE="$(mktemp -d "$WORKROOT/case-XXXXXX")/consumer.git"
-  "$REAL_GIT" clone -q --bare "$CONSUMER_SRC" "$CASE_CONSUMER_BARE"
+  "$REAL_GIT" clone -q --bare "${CASE_SRC:-$CONSUMER_SRC}" "$CASE_CONSUMER_BARE"
   "$REAL_GIT" -C "$CASE_CONSUMER_BARE" config core.hooksPath /dev/null
   local pin_b64
-  pin_b64="$(printf '{"version":"%s","profile":"%s"}' "$pin_version" "$pin_profile" | base64)"
+  pin_b64="$(printf '%s' "${CASE_PIN_JSON:-$(printf '{"version":"%s","profile":"%s"}' "$pin_version" "$pin_profile")}" | base64)"
   local py_b64
   py_b64="$(printf 'QUALITY_KIT_SHA = "%s"\nQUALITY_KIT_VERSION = "%s"\n' "$OLD_SHA" "$pin_version" | base64)"
   CASE_RC=0
@@ -251,6 +258,9 @@ run_case 9.9.9 "" 0 0 --py-pin src/pin.py
 # --- 0: happy path — prove the kit stamps, rewrite both constants, draft PR --
 run_case 9.9.8 "" 0 0 --py-pin src/pin.py
 [ "$CASE_RC" = 0 ] && ok "py-pin: happy path exits 0" || bad "py-pin: happy path exits 0" "rc=$CASE_RC out=$CASE_OUT"
+# py-pin never stamps the consumer, so there is no re-stamp to seed for.
+grep -q "not seeding burn-down" <<<"$CASE_OUT" \
+  && bad "py-pin bump does not seed" "$CASE_OUT" || ok "py-pin bump does not seed"
 pin_after="$(bumped src/pin.py)"
 # Mutation target: rewrite only one constant and one of these goes red.
 grep -qx "QUALITY_KIT_SHA = \"$KIT_TAG_SHA\"" <<<"$pin_after" \
@@ -308,5 +318,105 @@ cmp -s "$OUTSIDE" "$CONSUMER_SRC/src/pin.py" \
   && ok "py-pin: symlink target outside the clone untouched" || bad "py-pin: symlink target outside the clone untouched" "$(cat "$OUTSIDE")"
 grep -q "^gh pr create" "$CASE_LOG" && bad "py-pin: symlinked pin path opens no PR" "log: $(cat "$CASE_LOG")" \
   || ok "py-pin: symlinked pin path opens no PR"
+
+# === default mode: seed blocking pre-existing lint findings (#98) ============
+# booking-platform's bump was refused by its own pre-commit hook: its ledger was
+# already non-empty, so the re-stamp never seeded the kit's new quality-kit/*
+# rules and their pre-existing hits stayed at `error`. This consumer has such a
+# ledger, a lint script, and an oxlint stand-in driven by LINT_SPEC: one
+# "<code> <burnDown key> <n> <severity> <n once ledgered> <severity once
+# ledgered>" entry per rule, ';'-separated, read against the CURRENT ledger —
+# which is what the kit's nextjs config does (a burnDown key lints at warn).
+QK_JSON='{"version":"9.9.8","profile":"nextjs","runner":"npm","pendingFlags":[],"ruleOverrides":{"burnDown":{"no-console":3},"permanent":{}},"ignoreOverrides":[]}'
+QK_NOLINT_SRC="$WORKROOT/consumer-qk-nolint-src"
+QK_SRC="$WORKROOT/consumer-qk-src"
+mkdir -p "$QK_NOLINT_SRC"
+printf '%s\n' "$QK_JSON" > "$QK_NOLINT_SRC/.quality-kit.json"
+printf '{"name":"consumer","private":true,"scripts":{"lint":"oxlint --type-aware"}}\n' > "$QK_NOLINT_SRC/package.json"
+cp -r "$QK_NOLINT_SRC" "$QK_SRC"
+mkdir -p "$QK_SRC/node_modules/.bin"
+cat > "$QK_SRC/node_modules/.bin/oxlint" <<'OXLINT'
+#!/usr/bin/env python3
+import json, os
+burn = json.load(open(".quality-kit.json"))["ruleOverrides"]["burnDown"]
+diags = []
+for spec in os.environ["LINT_SPEC"].split(";"):
+    code, key, n, sev, ledgered_n, ledgered_sev = spec.split()
+    if key in burn:
+        n, sev = ledgered_n, ledgered_sev
+    diags += [{"code": code, "severity": sev}] * int(n)
+print(json.dumps({"diagnostics": diags}, separators=(",", ":")))
+OXLINT
+chmod +x "$QK_SRC/node_modules/.bin/oxlint"
+for src in "$QK_SRC" "$QK_NOLINT_SRC"; do
+  (cd "$src" && "$REAL_GIT" init -q -b main && "$REAL_GIT" config core.hooksPath /dev/null \
+    && "$REAL_GIT" add -A && "$REAL_GIT" -c user.name=t -c user.email=t@t commit -q -m init)
+done
+# Isolated git config, one per hooks directory: "blocking" stands in for the
+# consumer's validate:fast lint step, "empty" runs no hook at all.
+HOOKS_BLOCKING="$WORKROOT/hooks-blocking" HOOKS_EMPTY="$WORKROOT/hooks-empty"
+mkdir -p "$HOOKS_BLOCKING" "$HOOKS_EMPTY"
+cat > "$HOOKS_BLOCKING/pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+npm run --silent lint -- --format=json | python3 -c '
+import json, sys
+if any(d["severity"] == "error" for d in json.load(sys.stdin)["diagnostics"]):
+    sys.exit("[quality-kit] BLOCKED: lint reports error-severity findings")'
+HOOK
+chmod +x "$HOOKS_BLOCKING/pre-commit"
+for h in "$HOOKS_BLOCKING" "$HOOKS_EMPTY"; do printf '[core]\n\thooksPath = %s\n' "$h" > "$h.gitconfig"; done
+run_qk_case() { # hooks_dir consumer_src lint_spec
+  export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$1.gitconfig" LINT_SPEC="$3"
+  CASE_SRC="$2" CASE_PIN_JSON="$QK_JSON" run_case 9.9.8 nextjs 0 0
+  unset GIT_CONFIG_NOSYSTEM GIT_CONFIG_GLOBAL LINT_SPEC
+}
+# The pushed bump commit's burnDown, keys sorted, or empty if nothing landed.
+pushed_burn() { bumped .quality-kit.json | python3 -c '
+import json, sys
+print(json.dumps(json.load(sys.stdin)["ruleOverrides"]["burnDown"], sort_keys=True))' 2>/dev/null || true; }
+pr_draft_opened() { grep -q -- "^gh pr create --draft .*--head quality-kit/bump-9.9.9" "$CASE_LOG"; }
+
+# --- the refused booking-platform bump, reproduced ---------------------------
+run_qk_case "$HOOKS_BLOCKING" "$QK_SRC" \
+  "quality-kit(async-parallel) quality-kit/async-parallel 58 error 58 warning;eslint(no-console) no-console 2 warning 2 warning;eslint(no-alert) no-alert 4 warning 4 warning"
+[ "$CASE_RC" = 0 ] && pr_draft_opened \
+  && ok "unbaselined async-parallel errors no longer block the bump commit" \
+  || bad "unbaselined async-parallel errors no longer block the bump commit" "rc=$CASE_RC out=$CASE_OUT log: $(cat "$CASE_LOG")"
+burn="$(pushed_burn)"
+[ "$burn" = '{"no-console": 3, "quality-kit/async-parallel": 58}' ] \
+  && ok "the bump commit seeds async-parallel into burnDown" || bad "the bump commit seeds async-parallel into burnDown" "burnDown=$burn"
+# --- existing ledger entries and warning-only rules are left alone ----------
+python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1])["no-console"] == 3 else 1)' "$burn" 2>/dev/null \
+  && ok "an existing ledger entry keeps its count" || bad "an existing ledger entry keeps its count" "burnDown=$burn"
+python3 -c 'import json,sys; sys.exit(1 if "no-alert" in json.loads(sys.argv[1]) else 0)' "$burn" 2>/dev/null \
+  && ok "a warning-only rule is not seeded" || bad "a warning-only rule is not seeded" "burnDown=$burn"
+
+# --- seeded counts are the recount taken with the rule already ledgered ------
+run_qk_case "$HOOKS_EMPTY" "$QK_SRC" \
+  "quality-kit(async-parallel) quality-kit/async-parallel 58 error 57 warning;quality-kit(js-flatmap-filter) quality-kit/js-flatmap-filter 2 error 0 warning"
+[ "$CASE_RC" = 0 ] && pr_draft_opened \
+  && ok "recount case opens the draft PR" || bad "recount case opens the draft PR" "rc=$CASE_RC out=$CASE_OUT"
+burn="$(pushed_burn)"
+[ "$burn" = '{"no-console": 3, "quality-kit/async-parallel": 57}' ] \
+  && ok "seeded counts are the ledgered recount, zero-count rules dropped" \
+  || bad "seeded counts are the ledgered recount, zero-count rules dropped" "burnDown=$burn"
+
+# --- nothing new to seed leaves the ledger unchanged -------------------------
+run_qk_case "$HOOKS_BLOCKING" "$QK_SRC" "eslint(no-console) no-console 2 warning 2 warning"
+[ "$CASE_RC" = 0 ] && pr_draft_opened \
+  && ok "nothing to seed still opens the draft PR" || bad "nothing to seed still opens the draft PR" "rc=$CASE_RC out=$CASE_OUT"
+burn="$(pushed_burn)"
+[ "$burn" = '{"no-console": 3}' ] \
+  && ok "nothing to seed leaves the ledger unchanged" || bad "nothing to seed leaves the ledger unchanged" "burnDown=$burn"
+
+# --- linter not installed in the clone: report, then bump anyway -------------
+run_qk_case "$HOOKS_EMPTY" "$QK_NOLINT_SRC" "eslint(no-console) no-console 2 warning 2 warning"
+[ "$CASE_RC" = 0 ] && pr_draft_opened \
+  && ok "uncountable findings still open the draft PR" || bad "uncountable findings still open the draft PR" "rc=$CASE_RC out=$CASE_OUT"
+grep -qF "bump-pin: not seeding burn-down (baseline-rules.sh exit 3)" <<<"$CASE_OUT" \
+  && ok "uncountable findings name baseline-rules.sh's exit" || bad "uncountable findings name baseline-rules.sh's exit" "$CASE_OUT"
+burn="$(pushed_burn)"
+[ "$burn" = '{"no-console": 3}' ] \
+  && ok "uncountable findings leave the ledger unchanged" || bad "uncountable findings leave the ledger unchanged" "burnDown=$burn"
 
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }

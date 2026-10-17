@@ -27,13 +27,19 @@ fi
 # rules are extend-ignore'd in the rendered ruff.toml and would otherwise count
 # as zero. Sharing this script is what keeps one normalizer and one counting
 # implementation instead of a second copy inside the gate.
-SELECT="" REPO=""
+#
+# --errors counts only error-severity findings: the ones that fail a commit.
+# bump-pin.sh needs that to find rules the ledger lacks that block its bump
+# commit, without seeding rules that only warn. TS only — ruff has no severity,
+# every finding it reports already fails the gate.
+SELECT="" REPO="" ERRORS=0
 while [ $# -gt 0 ]; do case "$1" in
   --select) SELECT="${2:?--select needs a comma-separated rule list}"; shift 2 ;;
-  -*)       echo "unknown flag $1 (usage: baseline-rules.sh <repo> [--select a,b])" >&2; exit 64 ;;
+  --errors) ERRORS=1; shift ;;
+  -*)       echo "unknown flag $1 (usage: baseline-rules.sh <repo> [--select a,b] [--errors])" >&2; exit 64 ;;
   *)        REPO="$1"; shift ;;
 esac; done
-[ -n "$REPO" ] || { echo "usage: baseline-rules.sh <repo> [--select a,b]" >&2; exit 64; }
+[ -n "$REPO" ] || { echo "usage: baseline-rules.sh <repo> [--select a,b] [--errors]" >&2; exit 64; }
 REPO="$(cd "$REPO" && pwd)"
 [ -f "$REPO/.quality-kit.json" ] || { echo "baseline-rules.sh: $REPO/.quality-kit.json not found — stamp the repo first (quality-kit/bin/stamp.sh $REPO --profile <profile>)" >&2; exit 64; }
 PROFILE="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('profile',''))" "$REPO/.quality-kit.json")"
@@ -137,7 +143,7 @@ RAW="$( (cd "$REPO" && npm run --silent lint -- --format=json) 2>/dev/null || tr
 # $REPO is argv[1], never interpolated into the -c source.
 python3 -c "
 import collections, json, sys
-repo = sys.argv[1]
+repo, errors_only = sys.argv[1], sys.argv[2] == '1'
 raw = sys.stdin.read()
 diags = None
 try:
@@ -156,5 +162,6 @@ def norm(code):
         p, r = code[:-1].split('(', 1)
         return r if p == 'eslint' else f'{p}/{r}'
     return code
-c = collections.Counter(norm(d['code']) for d in diags if d.get('code'))
-print(json.dumps(dict(sorted(c.items()))))" "$REPO" <<<"$RAW"
+c = collections.Counter(norm(d['code']) for d in diags
+                        if d.get('code') and (not errors_only or d.get('severity') == 'error'))
+print(json.dumps(dict(sorted(c.items()))))" "$REPO" "$ERRORS" <<<"$RAW"
