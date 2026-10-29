@@ -281,6 +281,9 @@ recorded for the old project hooks under `[hooks.state]` is now unused.
   violations are genuinely unavoidable.
 - `ruleOverrides.permanent` — `rule → {level, why}`, never generated. `level` is
   `off` or `warn` (python: `off` only). A non-empty `why` is enforced.
+- `ruleOverrides.drift` — optional, never generated: `drift rule id → {level, why}`
+  for the drift-gate rules below (see *Drift rules — test parallelism and
+  secrets in argv*).
 - `ignoreOverrides` — repo-specific ignore globs appended to the fleet preset's.
 - `ignoreOverridesWhy` — `glob → why`, one non-empty reason for every
   `ignoreOverrides` glob, enforced. An ignore silences every rule on its path
@@ -336,6 +339,59 @@ re-stamp byte-exact.
   `permanent` is a hard oxlint config-parse error (`Rule '...' not found`,
   exit 1) at lint time — not a silent no-op. (Verified for oxlint/TS profiles;
   a typo'd ruff code may behave differently — not verified.)
+
+## Drift rules — test parallelism and secrets in argv
+
+`check-drift.sh` enforces four rules of its own. Each finding is a `DRIFT:`
+line that starts with the rule id. An unbounded test run sizes its worker pool
+from the machine's CPU count, so the default cap is **2 workers**.
+
+- `quality-kit/vitest-max-workers` (TS profiles). The Vitest config that Vitest
+  loads must bound its workers. That config is the first `vitest.config.*` in
+  the repo root (`.ts`, `.mts`, `.cts`, `.js`, `.mjs`, `.cjs`, in that order),
+  or the first `vite.config.*` when there is none. Its exported `test: { … }`
+  block must set `maxWorkers: 2` (or `1`) as a literal, or
+  `fileParallelism: false`. The following all fail: no config, a percentage,
+  any other number, a computed value, a commented-out key, and the Vitest 3
+  `poolOptions.*.maxThreads` / `maxForks` form. The kit stamps no Vitest config,
+  so a stamped repo needs one:
+
+      export default { test: { maxWorkers: 2 } };
+
+  When the `test` settings cannot be read statically (a shorthand `test`,
+  `test: someIdentifier`, or `export default config`), the gate prints a
+  `note:` line and does not fail on this rule.
+- `quality-kit/vitest-script-workers` (TS profiles). A `package.json` script
+  that passes `--maxWorkers` / `--max-workers` with any value but `1` or `2`
+  fails. There is one line per script, and it names the script.
+  `--no-file-parallelism` passes.
+- `quality-kit/pytest-xdist-workers` (python profile). pytest-xdist's `-n` /
+  `--numprocesses` set to `auto`, `logical` or a number above 2 fails. The gate
+  reads it from `addopts` in the pytest section of `pyproject.toml`,
+  `pytest.ini`, `tox.ini` and `setup.cfg`, and from `pytest` command lines in
+  the root `Makefile`. Use `-n 2` or lower.
+- `quality-kit/no-secret-argv` (every profile). `--token`, `--password` or
+  `--api-key` with a value fails. The gate looks in `package.json` scripts,
+  the root `Makefile` and the hook commands in `.claude/settings.json` and
+  `.codex/hooks.json`. Pass the secret through an environment variable instead.
+  The line names the location, never the value. `--password-stdin` and
+  `--token-file` pass.
+
+A repo that has a real reason to diverge declares it in `.quality-kit.json`:
+
+    "ruleOverrides": {
+      "burnDown": {}, "permanent": {},
+      "drift": { "quality-kit/vitest-max-workers": { "level": "warn", "why": "dedicated CI runner" } }
+    }
+
+- `level` `warn` prints each finding as a `warn:` line that does not fail the
+  gate. `level` `off` silences the rule.
+- `why` is required and must not be blank.
+- A malformed entry is a `DRIFT:` line naming `ruleOverrides.drift[<id>]`, and
+  it suppresses nothing. Malformed means a non-object `drift` or entry, another
+  level, a missing `why`, or an id that is not one of the four.
+- The oxlint configs and the ruff render ignore `drift`, so these ids never
+  reach a linter. A re-stamp keeps the key.
 
 ## React rules — `ts/react-rules/`
 

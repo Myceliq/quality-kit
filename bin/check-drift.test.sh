@@ -26,20 +26,32 @@ fresh() { # stamped nextjs fixture repo (carries a "next" dependency so the
           # smoke.test.ts satisfies the "a stamped repo has tests" gate — vitest
           # exits 1 on an empty collection, so without it every case below would
           # carry a second, unrelated DRIFT. Negative cases delete it explicitly.
+          # vitest.config.ts bounds the workers (#105) for the same reason.
   local r nv="${1:-16.3.1}"; r="$(mktemp -d)"
   (cd "$r" && git init -q && git config core.hooksPath /dev/null \
     && printf '{"name":"fix","dependencies":{"next":"^%s"},"scripts":{"build":"true"}}' "$nv" > package.json \
     && printf '{"lockfileVersion":3,"packages":{"node_modules/next":{"version":"%s"}}}' "$nv" > package-lock.json \
     && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
+    && printf 'export default { test: { maxWorkers: 2 } };\n' > vitest.config.ts \
     && printf '{}' > tsconfig.json && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
   stamp_quiet "$r"
   echo "$r"
 }
 # stamp surfaces baseline-rules.sh's stderr (the dirty-tree warning fires on
 # every fixture here), so fixture setup keeps stamp's output and shows it only
-# when the stamp itself fails
+# when the stamp itself fails. $2 picks the profile (default nextjs).
 stamp_quiet() { local log; log="$(mktemp)"
-  bash "$DIR/stamp.sh" "$1" --profile nextjs >"$log" 2>&1 || cat "$log" >&2; }
+  bash "$DIR/stamp.sh" "$1" --profile "${2:-nextjs}" >"$log" 2>&1 || cat "$log" >&2; }
+fresh_node() { # stamped node-profile fixture, otherwise shaped like fresh()
+  local r; r="$(mktemp -d)"
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null \
+    && printf '{"name":"n"}' > package.json && printf '{}' > tsconfig.json \
+    && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
+    && printf 'export default { test: { maxWorkers: 2 } };\n' > vitest.config.ts \
+    && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
+  stamp_quiet "$r" node
+  echo "$r"
+}
 run() { KIT_DIR="$KITROOT" bash "$CD" "$1" 2>&1; }
 
 R="$(fresh)"
@@ -89,6 +101,13 @@ echo "$out" | grep -q "DRIFT.*validate" && ok "rewired validate script caught" |
 R="$(fresh)"; printf '// @ts-ignore\nconst q=1;\n' > "$R/new.ts"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*suppression" && ok "new suppression over budget caught" || bad "new suppression over budget caught" "$out"
+
+# Worker-bound parsing must ignore commented properties and accept quoted keys.
+R="$(fresh_node)"; printf 'export default { test: { // maxWorkers: 2\n globals: false } };\n' > "$R/vitest.config.ts"
+out="$(run "$R" || true)"
+echo "$out" | grep -q 'DRIFT.*quality-kit/vitest-max-workers.*maxWorkers: 2' && ok "commented worker bound is ignored" || bad "commented worker bound is ignored" "$out"
+R="$(fresh_node)"; printf 'export default { test: { "maxWorkers": 2, "fileParallelism": false } };\n' > "$R/vitest.config.ts"
+run "$R" >/dev/null && ok "quoted worker keys are accepted" || bad "quoted worker keys are accepted" "$(run "$R" || true)"
 
 # --- #35: the suppression budget is unmeasurable inside the factory gate ---
 # The gate mounts a snapshot of one commit with NO `.git`, and `count-suppressions.sh`
@@ -289,6 +308,7 @@ fresh_pnpm() { # like fresh(), on pnpm. $1 = locked next version, $2 = lockfileV
     && printf '{"name":"fix",%s"dependencies":{"next":"^%s"},"scripts":{"build":"true"}}' "$extra" "$nv" > package.json \
     && pnpm_lock "$nv" "$lv" > pnpm-lock.yaml \
     && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
+    && printf 'export default { test: { maxWorkers: 2 } };\n' > vitest.config.ts \
     && printf '{}' > tsconfig.json && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
   stamp_quiet "$r"
   echo "$r"
@@ -494,12 +514,7 @@ echo "$out" | grep -q "internal gate error" && bad "non-object engines must not 
 
 # the floor is a TS-toolchain rule, not a nextjs one: every ts profile installs
 # ts/pins.json, so the node profile inherits it too
-NODEREPO="$(mktemp -d)"
-(cd "$NODEREPO" && git init -q && git config core.hooksPath /dev/null \
-  && printf '{"name":"n"}' > package.json && printf '{}' > tsconfig.json \
-  && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
-  && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
-bash "$DIR/stamp.sh" "$NODEREPO" --profile node >/dev/null
+NODEREPO="$(fresh_node)"
 run "$NODEREPO" >/dev/null && ok "stamped node-profile repo clean" || bad "stamped node-profile repo clean" "$(run "$NODEREPO" || true)"
 set_engines "$NODEREPO" ">=20"
 out="$(run "$NODEREPO" || true)"
@@ -623,7 +638,7 @@ out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*no test file found" && ok "vitest: a bare global with no import is not a runnable suite" || bad "vitest: a bare global with no import is not a runnable suite" "$out"
 # ...unless the repo turns globals on, in which case the bare form really runs
 R="$(fresh)"; rm "$R/smoke.test.ts"; printf 'it("smoke", () => {});\n' > "$R/a.test.ts"
-printf 'export default { test: { globals: true } };\n' > "$R/vitest.config.ts"
+printf 'export default { test: { globals: true, maxWorkers: 2 } };\n' > "$R/vitest.config.ts"
 run "$R" >/dev/null && ok "vitest: globals:true makes the bare form count" || bad "vitest: globals:true makes the bare form count" "$(run "$R" || true)"
 # ...and globals:false spelled out is still the default answer
 R="$(fresh)"; rm "$R/smoke.test.ts"; printf 'it("smoke", () => {});\n' > "$R/a.test.ts"
@@ -729,7 +744,7 @@ echo "$out" | grep -q "DRIFT.*no test file found" && ok "vitest: a regex .test()
 # collection away from the defaults gets an explicit hand-off, not a guess —
 # claiming "no test file found" would BLOCK a repo whose suite runs fine.
 R="$(fresh)"; rm "$R/smoke.test.ts"
-printf 'export default { test: { include: ["**/*.check.ts"] } };\n' > "$R/vitest.config.ts"
+printf 'export default { test: { include: ["**/*.check.ts"], maxWorkers: 2 } };\n' > "$R/vitest.config.ts"
 printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > "$R/smoke.check.ts"
 out="$(run "$R" || true)"
 run "$R" >/dev/null && ok "a custom vitest include hands the check off instead of blocking" || bad "a custom vitest include hands the check off instead of blocking" "$out"
@@ -765,8 +780,8 @@ echo "$out" | grep -q "note: vitest.config.ts declares its own test collection" 
 # ...but globals is NOT unioned (FIX, codex pre-commit round 19): vitest gives
 # the dedicated config precedence rather than merging, and globals decides
 # whether a bare it(...) is bound — the accept direction, so precedence rules.
-R="$(fresh)"; rm "$R/smoke.test.ts"; printf 'it("smoke", () => {});\n' > "$R/a.test.ts"
-printf 'export default { test: { globals: true } };\n' > "$R/vite.config.ts"
+R="$(fresh)"; rm "$R/smoke.test.ts" "$R/vitest.config.ts"; printf 'it("smoke", () => {});\n' > "$R/a.test.ts"
+printf 'export default { test: { globals: true, maxWorkers: 2 } };\n' > "$R/vite.config.ts"
 run "$R" >/dev/null && ok "globals:true in a lone vite.config counts" || bad "globals:true in a lone vite.config counts" "$(run "$R" || true)"
 printf 'export default { test: { environment: "node" } };\n' > "$R/vitest.config.ts"
 out="$(run "$R" || true)"
@@ -797,7 +812,7 @@ for cfg in 'export default { test: { "include": ["**/*.check.ts"] } };' \
 done
 # ...and a quoted globals key binds the bare form
 R="$(fresh)"; rm "$R/smoke.test.ts"; printf 'it("smoke", () => {});\n' > "$R/a.test.ts"
-printf 'export default { test: { "globals": true } };\n' > "$R/vitest.config.ts"
+printf 'export default { test: { "globals": true, maxWorkers: 2 } };\n' > "$R/vitest.config.ts"
 run "$R" >/dev/null && ok "a quoted globals key counts" || bad "a quoted globals key counts" "$(run "$R" || true)"
 
 # FIX (codex pre-commit, round 31): only the EXPORTED object is vitest's config.
@@ -1282,6 +1297,182 @@ printf '\nextend-ignore = ["F401"]\n' >> "$PYR/ruff.toml"
 out="$(run "$PYR" || true)"
 echo "$out" | grep -q "DRIFT.*ruff.toml" && ok "hand-edited ruff.toml caught" || bad "hand-edited ruff.toml caught" "$out"
 bash "$DIR/render-ruff.sh" "$PYR" > "$PYR/ruff.toml"
+
+# --- #105: bounded test parallelism, no secrets in argv, ruleOverrides.drift ---
+VMW=quality-kit/vitest-max-workers VSW=quality-kit/vitest-script-workers
+XW=quality-kit/pytest-xdist-workers NSA=quality-kit/no-secret-argv
+fresh_py() { # stamped python-profile fixture with one collected test
+  local r; r="$(mktemp -d)"
+  (cd "$r" && git init -q && git config core.hooksPath /dev/null \
+    && printf 'def test_smoke():\n    assert True\n' > test_smoke.py \
+    && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init)
+  stamp_quiet "$r" python
+  echo "$r"
+}
+# gate <repo> — sets rc, errout (stderr alone) and out (stdout + stderr)
+gate() { local e; e="$(mktemp)"; rc=0
+  out="$(KIT_DIR="$KITROOT" bash "$CD" "$1" 2>"$e")" || rc=$?
+  errout="$(cat "$e")"; rm -f "$e"; out="$out
+$errout"; }
+# drift_has <out> <needle>... — some DRIFT: line contains every needle
+drift_has() { local l; l="$(echo "$1" | grep '^DRIFT:' || true)"; shift
+  for n in "$@"; do l="$(echo "$l" | grep -F -- "$n" || true)"; done; [ -n "$l" ]; }
+no_line() { ! echo "$out" | grep -qF -- "$1"; }
+chk() { local n="$1"; shift; if "$@"; then ok "$n"; else bad "$n" "rc=$rc $out"; fi; }
+add_scripts() { python3 -c "
+import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['scripts'].update(json.loads(sys.argv[2])); json.dump(d,open(p,'w'))" "$1/package.json" "$2"; }
+
+R="$(fresh_node)"; gate "$R"
+chk "#105 the bounded node fixture passes the gate" [ "$rc" = 0 ]
+printf 'export default { test: { globals: false } };\n' > "$R/vitest.config.ts"; gate "$R"
+chk "#105 unbounded vitest.config.ts fails" [ "$rc" != 0 ]
+chk "#105 unbounded vitest.config.ts names the rule and maxWorkers: 2" drift_has "$out" "$VMW" "maxWorkers: 2"
+printf 'export default { test: { globals: false, maxWorkers: 2 } };\n' > "$R/vitest.config.ts"; gate "$R"
+chk "#105 adding maxWorkers: 2 passes" [ "$rc" = 0 ]
+chk "#105 adding maxWorkers: 2 leaves no vitest-max-workers line" no_line "$VMW"
+
+R="$(fresh)"
+printf 'import { defineConfig } from "vitest/config";\nexport default defineConfig({ test: { maxWorkers: 1 } });\n' > "$R/vitest.config.ts"; gate "$R"
+chk "#105 defineConfig with maxWorkers 1 passes (nextjs)" [ "$rc" = 0 ]
+chk "#105 defineConfig with maxWorkers 1 leaves no vitest-max-workers line" no_line "$VMW"
+
+R="$(fresh_node)"; printf 'export default { test: { fileParallelism: false } };\n' > "$R/vitest.config.ts"; gate "$R"
+chk "#105 fileParallelism false passes" [ "$rc" = 0 ]
+chk "#105 fileParallelism false leaves no vitest-max-workers line" no_line "$VMW"
+
+R="$(fresh_node)"; rm "$R/vitest.config.ts"; gate "$R"
+chk "#105 no vitest or vite config fails" [ "$rc" != 0 ]
+chk "#105 no vitest or vite config names the rule and maxWorkers: 2" drift_has "$out" "$VMW" "maxWorkers: 2"
+
+for cfg in 'export default { test: { maxWorkers: 4 } };' 'export default { test: { maxWorkers: "50%" } };' \
+           'export default { test: { // maxWorkers: 2
+ globals: false } };' \
+           'export default { test: { poolOptions: { threads: { maxThreads: 2 } } } };'; do
+  R="$(fresh_node)"; printf '%s\n' "$cfg" > "$R/vitest.config.ts"; gate "$R"
+  chk "#105 unbounded config fails: $cfg" [ "$rc" != 0 ]
+  chk "#105 unbounded config is a vitest-max-workers DRIFT: $cfg" drift_has "$out" "$VMW"
+done
+
+R="$(fresh_node)"
+printf 'export default { test: { maxWorkers: 2 } };\n' > "$R/vite.config.ts"
+printf 'export default { test: { globals: false } };\n' > "$R/vitest.config.ts"; gate "$R"
+chk "#105 a dedicated vitest config takes precedence over vite config" [ "$rc" != 0 ]
+chk "#105 the unbounded dedicated config is the DRIFT" drift_has "$out" "$VMW"
+
+R="$(fresh_node)"; rm "$R/vitest.config.ts"
+printf 'export default { test: { maxWorkers: 2 } };\n' > "$R/vite.config.ts"; gate "$R"
+chk "#105 vite.config.ts alone with a bound passes" [ "$rc" = 0 ]
+chk "#105 vite.config.ts alone with a bound leaves no vitest-max-workers line" no_line "$VMW"
+
+R="$(fresh_node)"; printf 'const test = { maxWorkers: 2 };\nexport default { test };\n' > "$R/vitest.config.ts"; gate "$R"
+chk "#105 unevaluable test settings hand off: exit 0" [ "$rc" = 0 ]
+chk "#105 unevaluable test settings hand off: a note: line names the rule" \
+  bash -c 'echo "$1" | grep "^note:" | grep -qF -- "$2"' _ "$errout" "$VMW"
+chk "#105 unevaluable test settings hand off: no vitest-max-workers DRIFT" eval '! drift_has "$out" "$VMW"'
+
+P="$(fresh_py)"; gate "$P"
+chk "#105 python profile is not subject to the Vitest rule" [ "$rc" = 0 ]
+chk "#105 python profile prints no vitest-max-workers line" no_line "$VMW"
+
+R="$(fresh_node)"; add_scripts "$R" '{"test:all": "vitest run --maxWorkers=100%"}'; gate "$R"
+chk "#105 percentage workers in a script fails" [ "$rc" != 0 ]
+chk "#105 percentage workers in a script names the rule and the script" drift_has "$out" "$VSW" "test:all"
+R="$(fresh_node)"; add_scripts "$R" '{"t1": "vitest run --maxWorkers 8", "t2": "vitest --max-workers=4"}'; gate "$R"
+chk "#105 space-separated and kebab-case raises fail" [ "$rc" != 0 ]
+chk "#105 a space-separated raise names t1" drift_has "$out" "$VSW" "t1"
+chk "#105 a kebab-case raise names t2" drift_has "$out" "$VSW" "t2"
+R="$(fresh_node)"
+add_scripts "$R" '{"t1": "vitest run --maxWorkers=2", "t2": "vitest run --maxWorkers 1", "t3": "vitest run --no-file-parallelism"}'; gate "$R"
+chk "#105 bounded or serial script flags pass" [ "$rc" = 0 ]
+chk "#105 bounded or serial script flags leave no vitest-script-workers line" no_line "$VSW"
+
+P="$(fresh_py)"; printf '[tool.pytest.ini_options]\naddopts = "-n auto"\n' > "$P/pyproject.toml"; gate "$P"
+chk "#105 pyproject addopts -n auto fails" [ "$rc" != 0 ]
+chk "#105 pyproject addopts -n auto names the rule, the file and -n 2" drift_has "$out" "$XW" pyproject.toml "-n 2"
+printf '[tool.pytest.ini_options]\naddopts = ["-n", "auto"]\n' > "$P/pyproject.toml"; gate "$P"
+chk "#105 pyproject list-form addopts fails" [ "$rc" != 0 ]
+chk "#105 pyproject list-form addopts is a pytest-xdist-workers DRIFT" drift_has "$out" "$XW"
+rm "$P/pyproject.toml"; printf '[pytest]\naddopts = -n 8\n' > "$P/pytest.ini"; gate "$P"
+chk "#105 pytest.ini -n 8 fails" [ "$rc" != 0 ]
+chk "#105 pytest.ini -n 8 names the rule and pytest.ini" drift_has "$out" "$XW" pytest.ini
+rm "$P/pytest.ini"; printf 'test-par: ; pytest -n 4 --dist loadgroup\n' >> "$P/Makefile"; gate "$P"
+chk "#105 Makefile recipe -n 4 fails" [ "$rc" != 0 ]
+chk "#105 Makefile recipe -n 4 names the rule and Makefile" drift_has "$out" "$XW" Makefile
+
+P="$(fresh_py)"; printf '[tool.pytest.ini_options]\naddopts = "-n 2"\n' > "$P/pyproject.toml"
+printf 'test-par: ; pytest --numprocesses=1\n' >> "$P/Makefile"; gate "$P"
+chk "#105 bounded xdist passes" [ "$rc" = 0 ]
+chk "#105 bounded xdist leaves no pytest-xdist-workers line" no_line "$XW"
+printf '[tool.other]\naddopts = "-n auto"\n' > "$P/pyproject.toml"; gate "$P"
+chk "#105 -n outside the pytest section is ignored" [ "$rc" = 0 ]
+chk "#105 -n outside the pytest section leaves no pytest-xdist-workers line" no_line "$XW"
+
+R="$(fresh_node)"; add_scripts "$R" '{"deploy": "vercel deploy --prod --token abc123secret"}'; gate "$R"
+chk "#105 vercel --token in a script fails" [ "$rc" != 0 ]
+chk "#105 vercel --token names the rule, the script and the environment-variable advice" \
+  drift_has "$out" "$NSA" deploy "environment variable"
+chk "#105 vercel --token does not leak the value" no_line abc123secret
+
+P="$(fresh_py)"; printf 'login: ; tool login --password=hunter2\n' >> "$P/Makefile"; gate "$P"
+chk "#105 --password= in the Makefile fails" [ "$rc" != 0 ]
+chk "#105 --password= in the Makefile names the rule and Makefile" drift_has "$out" "$NSA" Makefile
+chk "#105 --password= in the Makefile does not leak the value" no_line hunter2
+
+R="$(fresh_node)"
+python3 -c "
+import json,sys; p=sys.argv[1]; d=json.load(open(p))
+d['hooks'].setdefault('PreToolUse', []).append({'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': 'curl-tool --api-key sk-live-xyz'}]})
+json.dump(d,open(p,'w'))" "$R/.claude/settings.json"; gate "$R"
+chk "#105 --api-key in a repo-added Claude hook fails" [ "$rc" != 0 ]
+chk "#105 --api-key in a Claude hook names the rule and .claude/settings.json" drift_has "$out" "$NSA" .claude/settings.json
+chk "#105 --api-key in a Claude hook does not leak the value" no_line sk-live-xyz
+
+R="$(fresh_node)"
+add_scripts "$R" '{"deploy": "VERCEL_TOKEN=$VERCEL_TOKEN vercel deploy --prod", "login": "docker login --password-stdin"}'; gate "$R"
+chk "#105 environment variables and stdin flags pass" [ "$rc" = 0 ]
+chk "#105 environment variables and stdin flags leave no no-secret-argv line" no_line "$NSA"
+
+R="$(fresh_node)"; printf 'export default { test: { globals: false } };\n' > "$R/vitest.config.ts"
+qk_mut "$R" "d['ruleOverrides']={'burnDown':{},'permanent':{},'drift':{'quality-kit/vitest-max-workers':{'level':'warn','why':'dedicated CI runner'}}}"
+gate "$R"
+chk "#105 a warn override with a why passes" [ "$rc" = 0 ]
+chk "#105 a warn override still reports on a warn: line" \
+  bash -c 'echo "$1" | grep "^warn:" | grep -qF -- "$2"' _ "$errout" "$VMW"
+chk "#105 a warn override leaves no vitest-max-workers DRIFT" eval '! drift_has "$out" "$VMW"'
+qk_mut "$R" "d['ruleOverrides']['drift']={'quality-kit/vitest-max-workers':{'level':'off','why':'dedicated CI runner'}}"; gate "$R"
+chk "#105 an off override passes" [ "$rc" = 0 ]
+chk "#105 an off override silences the rule" no_line "$VMW"
+qk_mut "$R" "d['ruleOverrides']['drift']={'quality-kit/vitest-max-workers':{'level':'warn','why':'  '}}"; gate "$R"
+chk "#105 an override without a why is refused" [ "$rc" != 0 ]
+chk "#105 the refusal names the entry and why" drift_has "$out" "ruleOverrides.drift[quality-kit/vitest-max-workers]" why
+chk "#105 a refused override suppresses nothing" drift_has "$out" "$VMW" "maxWorkers: 2"
+
+R="$(fresh_node)"
+qk_mut "$R" "d['ruleOverrides']['drift']={'quality-kit/vitest-max-workers':{'level':'error','why':'x'},'quality-kit/typo-rule':{'level':'off','why':'x'}}"; gate "$R"
+chk "#105 a bad level and an unknown id are refused" [ "$rc" != 0 ]
+chk "#105 a bad level names the entry and level" drift_has "$out" "ruleOverrides.drift[quality-kit/vitest-max-workers]" level
+chk "#105 an unknown id names the entry" drift_has "$out" "ruleOverrides.drift[quality-kit/typo-rule]"
+
+R="$(fresh_node)"; qk_mut "$R" "d['ruleOverrides']['drift']=['quality-kit/vitest-max-workers']"; gate "$R"
+chk "#105 a non-object drift key is refused" [ "$rc" != 0 ]
+chk "#105 a non-object drift key names ruleOverrides.drift" drift_has "$out" "ruleOverrides.drift"
+chk "#105 a non-object drift key does not crash the gate" no_line "internal gate error"
+
+P="$(fresh_py)"
+qk_mut "$P" "d['ruleOverrides']['drift']={'quality-kit/no-secret-argv':{'level':'off','why':'local-only tool'}}"; gate "$P"
+chk "#105 a python repo with a drift override passes before re-stamp" [ "$rc" = 0 ]
+rc=0; bash "$DIR/stamp.sh" "$P" --profile python >/dev/null 2>&1 || rc=$?
+chk "#105 the python re-stamp succeeds" [ "$rc" = 0 ]
+chk "#105 ruleOverrides.drift survives a re-stamp" python3 -c "
+import json,sys; d=json.load(open(sys.argv[1]))
+sys.exit(0 if d['ruleOverrides'].get('drift')=={'quality-kit/no-secret-argv':{'level':'off','why':'local-only tool'}} else 1)" "$P/.quality-kit.json"
+gate "$P"
+chk "#105 the re-stamped python repo passes" [ "$rc" = 0 ]
+chk "#105 the drift override leaves ruff.toml matching its render" no_line ruff.toml
+
+for s in "$VMW" "$VSW" "$XW" "$NSA" "maxWorkers: 2" ruleOverrides.drift; do
+  grep -qF -- "$s" "$KITROOT/README.md" && ok "#105 README documents $s" || bad "#105 README documents $s" "missing from README.md"
+done
 
 # --- ratchet mode ---
 ratchet() { KIT_DIR="$KITROOT" bash "$CD" "$1" --ratchet 2>&1; }

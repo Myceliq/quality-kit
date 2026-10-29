@@ -1181,9 +1181,206 @@ def check_test_files():
     else:
         err("no test file found — the stamped validate chain runs `vitest run`, which exits 1 when it collects nothing, so this repo is red on day one. Add at least one file matching vitest's default include **/*.{test,spec}.?(c|m)[jt]s?(x) that declares a suite — e.g. src/smoke.test.ts: `import { it } from \"vitest\"; it(\"smoke\", () => {});`. The import matters: vitest's `globals` default is FALSE, so a bare `it(...)` throws \"it is not defined\" unless your vitest config sets globals: true. A matching file declaring no suite at all is collected and then fails with \"No test suite found in file\", which is the same red. (node_modules, dist, cypress and dotted directories are not searched, nor are vitest's excluded *.config.* filenames; a custom `include` in a repo-owned vitest config cannot be evaluated before install, so name at least one test file to match the default too.)")
 
+# Bounded test parallelism and no secrets in argv (#105). An unbounded test run
+# sizes its worker pool from the machine's CPU count, so `validate` on a
+# developer box, or on a runner shared by parallel agents, takes every core.
+# Each rule has a quality-kit/* id a repo can justify a divergence for under
+# .quality-kit.json ruleOverrides.drift. They are drift-gate rules, not lint
+# rules: the oxlint configs and the ruff render read only burnDown/permanent, so
+# an id here never reaches a linter as an unknown rule.
+DRIFT_RULES = ("quality-kit/vitest-max-workers", "quality-kit/vitest-script-workers",
+               "quality-kit/pytest-xdist-workers", "quality-kit/no-secret-argv")
+_DRIFT_OVERRIDE_HINT = "or justify it under .quality-kit.json ruleOverrides.drift (see quality-kit/README.md)"
+
+def check_drift_overrides():
+    # rule id -> "off" | "warn", for the well-formed entries only. A malformed
+    # entry is named and suppresses nothing: its rule still fails the gate.
+    ov = json.load(open(os.path.join(repo, ".quality-kit.json"))).get("ruleOverrides")
+    if not isinstance(ov, dict) or "drift" not in ov:
+        return {}      # a non-object ruleOverrides is check_overrides' DRIFT line
+    drift = ov["drift"]
+    if not isinstance(drift, dict):
+        err(f"ruleOverrides.drift must be an object mapping a drift rule id to {{level, why}} (got {type(drift).__name__}) — fix .quality-kit.json; the rule ids are {list(DRIFT_RULES)}")
+        return {}
+    levels = {}
+    for rule, spec in drift.items():
+        where = f"ruleOverrides.drift[{rule}]"
+        if rule not in DRIFT_RULES:
+            err(f"{where} names no drift rule — use one of {list(DRIFT_RULES)}, or remove the entry")
+            continue
+        if not isinstance(spec, dict):
+            err(f"{where} must be an object with level and why — see quality-kit/README.md")
+            continue
+        valid = True
+        if spec.get("level") not in ("off", "warn"):
+            err(f"{where}.level must be one of ['off', 'warn'] (got {spec.get('level')!r})")
+            valid = False
+        why = spec.get("why")
+        if not isinstance(why, str) or not why.strip():
+            err(f"{where} needs a non-empty why — a divergence from the kit's bound is a judgment call and must state its reason")
+            valid = False
+        if valid:
+            levels[rule] = spec["level"]
+    return levels
+
+def _finding(levels, rule, msg):
+    # One finding of a drift rule, at the level the repo's override sets.
+    level = levels.get(rule)
+    if level == "off":
+        return
+    if level == "warn":
+        print(f"warn: {rule}: {msg}", file=sys.stderr)
+    else:
+        err(f"{rule}: {msg}")
+
+# The config Vitest loads: the first vitest.config.* in this order, else the
+# first vite.config.* — the same extensions TS_RUNNER_CONFIGS accepts.
+VITEST_CONFIG_ORDER = [f"{n}.config.{e}" for n in ("vitest", "vite")
+                       for e in ("ts", "mts", "cts", "js", "mjs", "cjs")]
+
+def _top_level(block):
+    # A `{ … }` block's own keys only: every nested object and array is blanked,
+    # so the Vitest 3 `poolOptions.threads.maxThreads` (or a maxWorkers nested
+    # anywhere) cannot pass for the block's own test.maxWorkers. Strings are
+    # masked first, so a brace inside one cannot shift the depth.
+    out, depth = [], 0
+    for c in _mask_js_strings(block):
+        if c in "}]":
+            depth -= 1
+        out.append(c if depth <= 1 else " ")
+        if c in "{[":
+            depth += 1
+    return "".join(out)
+
+def _vitest_bounded(block):
+    # Strip comments before inspecting object keys; strings are preserved so
+    # quoted JavaScript property names remain valid syntax.
+    top = _top_level(_strip_js_comments(block))
+    def last(key):
+        vals = re.findall(r"(?:^|[^\w$.])(?:%s|['\"]%s['\"])\s*:\s*([^,}\]]*)" % (key, key), top)
+        return vals[-1].strip() if vals else None
+    return last("maxWorkers") in ("1", "2") or last("fileParallelism") == "false"
+
+def check_vitest_workers(levels):
+    # The bound has to live in the config: the canonical test scripts are
+    # byte-owned (compared above), so a repo cannot add the flag to them.
+    rule = "quality-kit/vitest-max-workers"
+    name = next((n for n in VITEST_CONFIG_ORDER if os.path.lexists(os.path.join(repo, n))), None)
+    if name is None:
+        _finding(levels, rule, "no vitest.config.* or vite.config.* in the repo root, so `vitest run` sizes its worker pool from the CPU count — add vitest.config.ts: `export default { test: { maxWorkers: 2 } };`, " + _DRIFT_OVERRIDE_HINT)
+        return
+    # A config the scan could not read (a symlink, say) has no entry, and reads
+    # as unbounded: an unread bound is not a bound.
+    block, indirect = next(((b, i) for n, b, i in _vitest_test_blocks() if n == name), ("", False))
+    if indirect:
+        if levels.get(rule) != "off":
+            print(f"note: {rule}: {name} sets its test options through something this gate cannot evaluate before install (a shorthand `test`, `test: someIdentifier`, or an exported identifier) — the worker bound is not checked for this repo; make sure those options set maxWorkers: 2", file=sys.stderr)
+        return
+    if not _vitest_bounded(block):
+        _finding(levels, rule, f"{name} does not bound Vitest's workers, so `vitest run` sizes its pool from the CPU count — set `maxWorkers: 2` (1 also passes, as does `fileParallelism: false`) as a literal in its exported test: {{ … }} block, " + _DRIFT_OVERRIDE_HINT)
+
+_SCRIPT_WORKERS_RE = re.compile(r"(?<![\w-])--(?:maxWorkers|max-workers)(?:=|\s+)([^\s;&|]+)")
+
+def check_script_workers(levels, scripts):
+    # A repo-added script can lift the config's bound from the command line.
+    for k, v in scripts.items():
+        if not isinstance(v, str):
+            continue
+        raised = [w.strip("\"'") for w in _SCRIPT_WORKERS_RE.findall(v)]
+        raised = [w for w in raised if w not in ("1", "2")]
+        if raised:
+            _finding(levels, "quality-kit/vitest-script-workers", f"package.json scripts.{k} passes --maxWorkers={raised[0]}, lifting the 2-worker bound — use --maxWorkers=2 (or drop the flag and let the vitest config bound it), " + _DRIFT_OVERRIDE_HINT)
+
+# -n <v>, -n<v>, --numprocesses <v>, --numprocesses=<v>
+_XDIST_RE = re.compile(r"(?<![\w-])(?:-n\s*|--numprocesses(?:=|\s+))([^\s;&|]+)")
+
+def _pytest_addopts(name, src):
+    # The addopts of this file's OWN pytest section, flattened to one argument
+    # string: TOML's string and (possibly multi-line) list forms, INI's indented
+    # continuation lines. Same section rule as _py_collection_override.
+    # ponytail: no TOML triple-quoted strings. Ceiling: a multi-line """…"""
+    # addopts reads as empty. Upgrade path: tomllib, once the gate's python
+    # floor is 3.11.
+    want, section, lines, i, out = PY_PYTEST_SECTIONS[name], None, src.splitlines(), 0, []
+    while i < len(lines):
+        line = lines[i].strip(); i += 1
+        if not line or line[0] in "#;":
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        m = re.match(r"""["']?addopts["']?\s*[:=]\s*(.*)$""", line)
+        if section != want or not m:
+            continue
+        val = m.group(1)
+        if name == "pyproject.toml":
+            while val.startswith("[") and val.count("[") > val.count("]") and i < len(lines):
+                val += " " + lines[i]; i += 1
+            out.append(" ".join(s for _, s in re.findall(r"""(["'])(.*?)\1""", val)))
+        else:
+            while i < len(lines) and lines[i][:1] in (" ", "\t") and lines[i].strip():
+                val += " " + lines[i].strip(); i += 1
+            out.append(val)
+    return " ".join(out)
+
+def check_xdist_workers(levels):
+    hits = []
+    for name in PY_PYTEST_SECTIONS:
+        src = _safe_read(os.path.join(repo, name))
+        if src:
+            hits += [(name, v) for v in _XDIST_RE.findall(_pytest_addopts(name, src))]
+    # Only what follows a pytest invocation on the line: `head -n 5` in a recipe
+    # is not a worker count.
+    for n, line in enumerate((_safe_read(os.path.join(repo, "Makefile")) or "").splitlines(), 1):
+        m = re.search(r"\bpy\.?test\b", line)
+        if m:
+            hits += [(f"Makefile:{n}", v) for v in _XDIST_RE.findall(line[m.end():])]
+    for where, v in hits:
+        v = v.strip("\"'")
+        if v in ("auto", "logical") or (v.isdigit() and int(v) > 2):
+            _finding(levels, "quality-kit/pytest-xdist-workers", f"{where} runs pytest-xdist with -n {v}, more workers than the bound of 2 — cap it at `-n 2` (or drop -n), " + _DRIFT_OVERRIDE_HINT)
+
+_SECRET_FLAG_RE = re.compile(r"(?<![\w-])--(token|password|api-key)(?:=|\s+(?!-)\S)")
+
+def _hook_commands(node):
+    # Every `command` string anywhere under a hooks file's `hooks` key.
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if k == "command" and isinstance(v, str):
+                yield v
+            else:
+                yield from _hook_commands(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _hook_commands(v)
+
+def check_secret_argv(levels, scripts):
+    # A secret in argv is readable by every process on the machine (ps, /proc)
+    # and lands in shell history and CI logs. The message names the flag and
+    # where it is, never the value.
+    rule = "quality-kit/no-secret-argv"
+    places = [(f"package.json scripts.{k}", v) for k, v in scripts.items() if isinstance(v, str)]
+    mk = _safe_read(os.path.join(repo, "Makefile")) or ""
+    places += [(f"Makefile:{n}", line) for n, line in enumerate(mk.splitlines(), 1)]
+    for name in (".claude/settings.json", ".codex/hooks.json"):
+        src = _safe_read(os.path.join(repo, name))
+        if src is None:
+            continue
+        try:
+            d = json.loads(src)
+        except ValueError:
+            _finding(levels, rule, f"{name} is not valid JSON, so its hook commands cannot be checked for secrets passed on the command line — fix the file")
+            continue
+        places += [(name, c) for c in _hook_commands(d.get("hooks") if isinstance(d, dict) else None)]
+    for where, text in places:
+        for m in _SECRET_FLAG_RE.finditer(text):
+            _finding(levels, rule, f"{where} passes --{m.group(1)} with a value on the command line, where every process on the machine can read it — read the secret from an environment variable instead (most CLIs take one, e.g. VERCEL_TOKEN), " + _DRIFT_OVERRIDE_HINT)
+
 def main():
     check_overrides()
+    levels = check_drift_overrides()
     check_test_files()
+    scripts = {}
     if profile != "python":
         pkg = json.load(open(os.path.join(repo, "package.json")))
         check_engines_node(pkg)
@@ -1220,6 +1417,11 @@ def main():
             got = ts.get("compilerOptions", {}).get(flag, want)
             if got != want and flag not in pending:
                 err(f"tsconfig relaxes protected flag {flag} — revert, or stage it via .quality-kit.json pendingFlags")
+        check_vitest_workers(levels)
+        check_script_workers(levels, scripts)
+    else:
+        check_xdist_workers(levels)
+    check_secret_argv(levels, scripts)
 
     # the merged .claude/settings.json must still carry the kit's hook entries
     # under the same event with the same behavior-defining fields (matcher +

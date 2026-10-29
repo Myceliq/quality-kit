@@ -200,6 +200,7 @@ fresh() { # stamped nextjs fixture repo, as bin/check-drift.test.sh builds it; a
     && printf '{"name":"fix","dependencies":{"next":"^16.3.1"},"scripts":{"build":"true"}}' > package.json \
     && printf '{"lockfileVersion":3,"packages":{"node_modules/next":{"version":"16.3.1"}}}' > package-lock.json \
     && printf 'import { it } from "vitest";\nit("smoke", () => {});\n' > smoke.test.ts \
+    && printf 'export default { test: { maxWorkers: 2 } };\n' > vitest.config.ts \
     && printf '{}' > tsconfig.json && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -q -m init) || return 1
   bash "$KITROOT/bin/stamp.sh" "$r" --profile nextjs >/dev/null || return 1
   echo "$r"
