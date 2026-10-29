@@ -1253,11 +1253,11 @@ def _top_level(block):
     return "".join(out)
 
 def _vitest_bounded(block):
-    # Strip comments before inspecting object keys; strings are preserved so
-    # quoted JavaScript property names remain valid syntax.
-    top = _top_level(_strip_js_comments(block))
+    # The block comes from _vitest_test_blocks: comments are already stripped
+    # and quoted keys already bare.
+    top = _top_level(block)
     def last(key):
-        vals = re.findall(r"(?:^|[^\w$.])(?:%s|['\"]%s['\"])\s*:\s*([^,}\]]*)" % (key, key), top)
+        vals = re.findall(r"(?:^|[^\w$.])%s\s*:\s*([^,}\]]*)" % key, top)
         return vals[-1].strip() if vals else None
     return last("maxWorkers") in ("1", "2") or last("fileParallelism") == "false"
 

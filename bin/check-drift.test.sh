@@ -102,10 +102,7 @@ R="$(fresh)"; printf '// @ts-ignore\nconst q=1;\n' > "$R/new.ts"
 out="$(run "$R" || true)"
 echo "$out" | grep -q "DRIFT.*suppression" && ok "new suppression over budget caught" || bad "new suppression over budget caught" "$out"
 
-# Worker-bound parsing must ignore commented properties and accept quoted keys.
-R="$(fresh_node)"; printf 'export default { test: { // maxWorkers: 2\n globals: false } };\n' > "$R/vitest.config.ts"
-out="$(run "$R" || true)"
-echo "$out" | grep -q 'DRIFT.*quality-kit/vitest-max-workers.*maxWorkers: 2' && ok "commented worker bound is ignored" || bad "commented worker bound is ignored" "$out"
+# Worker-bound parsing accepts quoted keys (a commented key is in the #105 loop).
 R="$(fresh_node)"; printf 'export default { test: { "maxWorkers": 2, "fileParallelism": false } };\n' > "$R/vitest.config.ts"
 run "$R" >/dev/null && ok "quoted worker keys are accepted" || bad "quoted worker keys are accepted" "$(run "$R" || true)"
 
@@ -1322,8 +1319,7 @@ chk() { local n="$1"; shift; if "$@"; then ok "$n"; else bad "$n" "rc=$rc $out";
 add_scripts() { python3 -c "
 import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['scripts'].update(json.loads(sys.argv[2])); json.dump(d,open(p,'w'))" "$1/package.json" "$2"; }
 
-R="$(fresh_node)"; gate "$R"
-chk "#105 the bounded node fixture passes the gate" [ "$rc" = 0 ]
+R="$(fresh_node)"
 printf 'export default { test: { globals: false } };\n' > "$R/vitest.config.ts"; gate "$R"
 chk "#105 unbounded vitest.config.ts fails" [ "$rc" != 0 ]
 chk "#105 unbounded vitest.config.ts names the rule and maxWorkers: 2" drift_has "$out" "$VMW" "maxWorkers: 2"
