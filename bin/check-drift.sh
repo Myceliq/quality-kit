@@ -1341,15 +1341,18 @@ def check_xdist_workers(levels):
         src = _safe_read(os.path.join(repo, name))
         if src:
             hits += [(name, v) for v in _XDIST_RE.findall(_pytest_addopts(name, src))]
-    # Only the pytest command itself: `head -n 5` before it or `| tail -n 50`
-    # after it is not a worker count. The command ends at `|`, `;`, `&&` or a
-    # lone `&`, never at the `&` of a `2>&1` redirect.
+    # Only the arguments of each pytest command: `head -n 5` before it or
+    # `| tail -n 50` after it is not a worker count. A command ends at `|`, `;`,
+    # `&&` or a lone `&`, never at the `&` of a `2>&1` redirect; every command on
+    # the line is read, and a `pytest-fast:` target name is not a pytest command.
     # ponytail: no shell quoting; a `|` inside quoted pytest args ends it early.
     for n, line in _makefile_lines():
-        m = re.search(r"\bpy\.?test\b", line)
-        if m:
-            cmd = re.split(r"\|\|?|;|&&|(?<![<>])&(?!>)", line[m.end():], maxsplit=1)[0]
-            hits += [(f"Makefile:{n}", v) for v in _XDIST_RE.findall(cmd)]
+        if line.lstrip().startswith("#"):
+            continue
+        for cmd in re.split(r"\|\|?|;|&&|(?<![<>])&(?!>)", line):
+            m = re.search(r"(?<![\w.-])py\.?test(?![\w-])", cmd)
+            if m:
+                hits += [(f"Makefile:{n}", v) for v in _XDIST_RE.findall(cmd[m.end():])]
     for where, v in hits:
         v = v.strip("\"'")
         if v in ("auto", "logical") or (v.isdigit() and int(v) > 2):
