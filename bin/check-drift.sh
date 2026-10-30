@@ -1341,12 +1341,15 @@ def check_xdist_workers(levels):
         src = _safe_read(os.path.join(repo, name))
         if src:
             hits += [(name, v) for v in _XDIST_RE.findall(_pytest_addopts(name, src))]
-    # Only what follows a pytest invocation on the line: `head -n 5` in a recipe
-    # is not a worker count.
+    # Only the pytest command itself: `head -n 5` before it or `| tail -n 50`
+    # after it is not a worker count. The command ends at `|`, `;`, `&&` or a
+    # lone `&`, never at the `&` of a `2>&1` redirect.
+    # ponytail: no shell quoting; a `|` inside quoted pytest args ends it early.
     for n, line in _makefile_lines():
         m = re.search(r"\bpy\.?test\b", line)
         if m:
-            hits += [(f"Makefile:{n}", v) for v in _XDIST_RE.findall(line[m.end():])]
+            cmd = re.split(r"\|\|?|;|&&|(?<![<>])&(?!>)", line[m.end():], maxsplit=1)[0]
+            hits += [(f"Makefile:{n}", v) for v in _XDIST_RE.findall(cmd)]
     for where, v in hits:
         v = v.strip("\"'")
         if v in ("auto", "logical") or (v.isdigit() and int(v) > 2):

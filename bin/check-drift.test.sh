@@ -1397,6 +1397,11 @@ chk "#105 Makefile recipe -n 4 names the rule and Makefile" drift_has "$out" "$X
 P="$(fresh_py)"; printf 'test-par:\n\tpytest \\\n\t\t-n 8\n' >> "$P/Makefile"; gate "$P"
 chk "#105 backslash-continued Makefile recipe -n 8 fails" [ "$rc" != 0 ]
 chk "#105 backslash-continued Makefile recipe -n 8 names the rule and Makefile" drift_has "$out" "$XW" Makefile
+P="$(fresh_py)"; printf 'test-log: ; pytest -q 2>&1 | tail -n 50\n' >> "$P/Makefile"; gate "$P"
+chk "#105 -n in a command piped after pytest passes" [ "$rc" = 0 ]
+chk "#105 -n in a command piped after pytest leaves no pytest-xdist-workers line" no_line "$XW"
+P="$(fresh_py)"; printf 'test-par: ; pytest -q 2>&1 -n 8\n' >> "$P/Makefile"; gate "$P"
+chk "#105 -n after a 2>&1 redirect still fails" [ "$rc" != 0 ]
 
 P="$(fresh_py)"; printf '[tool.pytest.ini_options]\naddopts = "-n 2"\n' > "$P/pyproject.toml"
 printf 'test-par: ; pytest --numprocesses=1\n' >> "$P/Makefile"; gate "$P"
