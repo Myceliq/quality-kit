@@ -1323,6 +1323,18 @@ def _pytest_addopts(name, src):
             out.append(val)
     return " ".join(out)
 
+def _makefile_lines():
+    # The root Makefile as make reads it: a line ending in `\` continues on the
+    # next, so `pytest \` + `-n 8` is one command. Yields (first line no, text).
+    n, buf = 0, []
+    for i, line in enumerate((_safe_read(os.path.join(repo, "Makefile")) or "").splitlines(), 1):
+        n = n if buf else i
+        if line.endswith("\\"):
+            buf.append(line[:-1]); continue
+        yield n, " ".join(buf + [line]); buf = []
+    if buf:
+        yield n, " ".join(buf)
+
 def check_xdist_workers(levels):
     hits = []
     for name in PY_PYTEST_SECTIONS:
@@ -1331,7 +1343,7 @@ def check_xdist_workers(levels):
             hits += [(name, v) for v in _XDIST_RE.findall(_pytest_addopts(name, src))]
     # Only what follows a pytest invocation on the line: `head -n 5` in a recipe
     # is not a worker count.
-    for n, line in enumerate((_safe_read(os.path.join(repo, "Makefile")) or "").splitlines(), 1):
+    for n, line in _makefile_lines():
         m = re.search(r"\bpy\.?test\b", line)
         if m:
             hits += [(f"Makefile:{n}", v) for v in _XDIST_RE.findall(line[m.end():])]
@@ -1360,8 +1372,7 @@ def check_secret_argv(levels, scripts):
     # where it is, never the value.
     rule = "quality-kit/no-secret-argv"
     places = [(f"package.json scripts.{k}", v) for k, v in scripts.items() if isinstance(v, str)]
-    mk = _safe_read(os.path.join(repo, "Makefile")) or ""
-    places += [(f"Makefile:{n}", line) for n, line in enumerate(mk.splitlines(), 1)]
+    places += [(f"Makefile:{n}", line) for n, line in _makefile_lines()]
     for name in (".claude/settings.json", ".codex/hooks.json"):
         src = _safe_read(os.path.join(repo, name))
         if src is None:

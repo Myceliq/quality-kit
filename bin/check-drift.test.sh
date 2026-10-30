@@ -1394,6 +1394,9 @@ chk "#105 pytest.ini -n 8 names the rule and pytest.ini" drift_has "$out" "$XW" 
 rm "$P/pytest.ini"; printf 'test-par: ; pytest -n 4 --dist loadgroup\n' >> "$P/Makefile"; gate "$P"
 chk "#105 Makefile recipe -n 4 fails" [ "$rc" != 0 ]
 chk "#105 Makefile recipe -n 4 names the rule and Makefile" drift_has "$out" "$XW" Makefile
+P="$(fresh_py)"; printf 'test-par:\n\tpytest \\\n\t\t-n 8\n' >> "$P/Makefile"; gate "$P"
+chk "#105 backslash-continued Makefile recipe -n 8 fails" [ "$rc" != 0 ]
+chk "#105 backslash-continued Makefile recipe -n 8 names the rule and Makefile" drift_has "$out" "$XW" Makefile
 
 P="$(fresh_py)"; printf '[tool.pytest.ini_options]\naddopts = "-n 2"\n' > "$P/pyproject.toml"
 printf 'test-par: ; pytest --numprocesses=1\n' >> "$P/Makefile"; gate "$P"

@@ -369,10 +369,11 @@ from the machine's CPU count, so the default cap is **2 workers**.
   `--numprocesses` set to `auto`, `logical` or a number above 2 fails. The gate
   reads it from `addopts` in the pytest section of `pyproject.toml`,
   `pytest.ini`, `tox.ini` and `setup.cfg`, and from `pytest` command lines in
-  the root `Makefile`. Use `-n 2` or lower.
+  the root `Makefile`, a backslash-continued recipe read as one line. Use `-n 2` or lower.
 - `quality-kit/no-secret-argv` (every profile). `--token`, `--password` or
-  `--api-key` with a value fails. The gate looks in `package.json` scripts,
-  the root `Makefile` and the hook commands in `.claude/settings.json` and
+  `--api-key` with a value fails. The gate looks in `package.json` scripts
+  (TypeScript profiles only), the root `Makefile` (backslash-continued lines
+  read as one) and the hook commands in `.claude/settings.json` and
   `.codex/hooks.json`. Pass the secret through an environment variable instead.
   The line names the location, never the value. `--password-stdin` and
   `--token-file` pass.
