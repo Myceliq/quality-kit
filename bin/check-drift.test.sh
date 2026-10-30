@@ -1427,6 +1427,8 @@ P="$(fresh_py)"; printf 'login: ; tool login --password=hunter2\n' >> "$P/Makefi
 chk "#105 --password= in the Makefile fails" [ "$rc" != 0 ]
 chk "#105 --password= in the Makefile names the rule and Makefile" drift_has "$out" "$NSA" Makefile
 chk "#105 --password= in the Makefile does not leak the value" no_line hunter2
+P="$(fresh_py)"; printf '# never pass --token on the command line\n' >> "$P/Makefile"; gate "$P"
+chk "#105 a Makefile comment naming --token passes" [ "$rc" = 0 ]
 
 R="$(fresh_node)"
 python3 -c "

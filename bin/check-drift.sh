@@ -1325,14 +1325,17 @@ def _pytest_addopts(name, src):
 
 def _makefile_lines():
     # The root Makefile as make reads it: a line ending in `\` continues on the
-    # next, so `pytest \` + `-n 8` is one command. Yields (first line no, text).
+    # next, so `pytest \` + `-n 8` is one command. Yields (first line no, text),
+    # comment lines left out: make never runs them.
     n, buf = 0, []
     for i, line in enumerate((_safe_read(os.path.join(repo, "Makefile")) or "").splitlines(), 1):
         n = n if buf else i
         if line.endswith("\\"):
             buf.append(line[:-1]); continue
-        yield n, " ".join(buf + [line]); buf = []
-    if buf:
+        text, buf = " ".join(buf + [line]), []
+        if not text.lstrip().startswith("#"):
+            yield n, text
+    if buf and not buf[0].lstrip().startswith("#"):
         yield n, " ".join(buf)
 
 def check_xdist_workers(levels):
@@ -1347,8 +1350,6 @@ def check_xdist_workers(levels):
     # the line is read, and a `pytest-fast:` target name is not a pytest command.
     # ponytail: no shell quoting; a `|` inside quoted pytest args ends it early.
     for n, line in _makefile_lines():
-        if line.lstrip().startswith("#"):
-            continue
         for cmd in re.split(r"\|\|?|;|&&|(?<![<>])&(?!>)", line):
             m = re.search(r"(?<![\w.-])py\.?test(?![\w-])", cmd)
             if m:
