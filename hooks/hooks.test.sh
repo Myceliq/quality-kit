@@ -82,6 +82,74 @@ set +e; err=$( (cd "$RF" && echo '{}' | bash $H) 2>&1 >/dev/null ); rc=$?; set -
 [ "$rc" = 2 ] && echo "$err" | grep -q "validate:fast FAILED" && ok "dirty+red blocks with exit 2" || bad "dirty+red blocks with exit 2" "rc=$rc err=$err"
 set +e; (cd "$RF" && printf '{"stop_hook_active": true}' | bash $H 2>/dev/null); rc=$?; set -e
 [ "$rc" = 0 ] && ok "stop_hook_active releases (no livelock)" || bad "stop_hook_active releases (no livelock)" "rc=$rc"
+
+rename_case() { # source, destination, expected exit
+  local src=$1 dst=$2 expected=$3 tree commit rc err
+  fixture RR 1
+  mkdir -p "$RR/$(dirname "$src")" "$RR/$(dirname "$dst")"
+  printf 'rename content\n' > "$RR/$src"
+  git -C "$RR" add -- "$src"
+  tree=$(git -C "$RR" write-tree)
+  commit=$(printf 'rename baseline\n' | git -C "$RR" -c user.name=t -c user.email=t@t commit-tree "$tree" -p HEAD)
+  git -C "$RR" update-ref HEAD "$commit"
+  git -C "$RR" mv -- "$src" "$dst"
+  set +e; err=$(cd "$RR" && echo '{}' | bash "$H" 2>&1); rc=$?; set -e
+  if [ "$rc" = "$expected" ] && { { [ "$expected" = 0 ] && [ ! -e "$RR/validate-ran" ]; } || { [ "$expected" = 2 ] && [ -e "$RR/validate-ran" ]; }; }; then
+    ok "rename $src -> $dst: exit $expected"
+  else
+    bad "rename $src -> $dst" "rc=$rc expected=$expected err=$err"
+  fi
+}
+rename_case 'scripts/example.ts' 'scripts/example.md' 2
+rename_case 'scripts/example.md' 'scripts/example.ts' 2
+rename_case 'docs/example.txt' 'docs/example.md' 0
+rename_case $'scripts/a " -> b\n.ts' $'scripts/a " -> b\n.md' 2
+rename_case $'docs/a " -> b\n.txt' $'docs/a " -> b\n.md' 0
+
+# A failed or malformed status must not be mistaken for a clean/docs-only tree.
+mkdir -p "$T/status-bin"
+cat > "$T/status-bin/git" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = status ]; then
+  if [ "\${BAD_STATUS:-}" = malformed ]; then printf 'R  docs/dest.md\\0'; exit 0; fi
+  if [ "\${BAD_STATUS:-}" = record ]; then cat "$T/status-record"; exit 0; fi
+  exit 1
+fi
+exec "$(command -v git)" "\$@"
+EOF
+chmod +x "$T/status-bin/git"
+for mode in failed malformed; do
+  rm -f "$RF/validate-ran"
+  set +e; (cd "$RF" && echo '{}' | BAD_STATUS="$mode" PATH="$T/status-bin:$PATH" bash "$H" 2>/dev/null); rc=$?; set -e
+  [ "$rc" = 2 ] && [ -e "$RF/validate-ran" ] && ok "$mode status validates" \
+    || bad "$mode status validates" "rc=$rc"
+done
+
+# Synthetic porcelain records exercise malformed docs-looking paths and copy sources.
+status_record() { # description, expected exit; caller writes the NUL records first
+  local label=$1 expected=$2 rc
+  rm -f "$RF/validate-ran"
+  set +e; (cd "$RF" && echo '{}' | BAD_STATUS=record PATH="$T/status-bin:$PATH" bash "$H" 2>/dev/null); rc=$?; set -e
+  if [ "$rc" = "$expected" ] && { { [ "$expected" = 2 ] && [ -e "$RF/validate-ran" ]; } || { [ "$expected" = 0 ] && [ ! -e "$RF/validate-ran" ]; }; }; then
+    ok "$label"
+  else
+    bad "$label" "rc=$rc expected=$expected"
+  fi
+}
+for path in 'docs/../src.ts' 'docs/./note.md' 'docs//note.md' '/docs/note.md' 'docs/note.md/'; do
+  printf ' M %s\0' "$path" > "$T/status-record"
+  status_record "invalid path $path validates" 2
+done
+printf 'RR docs/dest.md\0docs/source.md\0' > "$T/status-record"
+status_record 'invalid status combination validates' 2
+printf 'R  docs/dest.md\0docs/../source.md\0' > "$T/status-record"
+status_record 'invalid rename source validates' 2
+printf 'C  docs/dest.md\0src/source.ts\0' > "$T/status-record"
+status_record 'copy source code validates' 2
+printf 'C  docs/dest.md\0docs/source.txt\0' > "$T/status-record"
+status_record 'docs-only copy skips' 0
+printf 'C  docs/dest.md\0docs/../source.md\0' > "$T/status-record"
+status_record 'invalid copy source validates' 2
 U="$(mktemp -d)"
 (cd "$U" && git init -q . && mkdir .quality && cp "$SV" $H && echo '{}' | bash $H) && ok "unstamped repo no-op" || bad "unstamped repo no-op" "blocked"
 
