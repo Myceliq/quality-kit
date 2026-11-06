@@ -52,10 +52,30 @@ theirs="$(common_dir "$root")" || exit 0
 cd "$root" || exit 0
 [ -f .quality-kit.json ] || exit 0
 
-changed="$(git status --porcelain --untracked-files=all | cut -c4-)"
-[ -z "$changed" ] && exit 0
-# docs-only diffs skip validation
-printf '%s\n' "$changed" | grep -qvE '(^docs/|\.md$|\.txt$)' || exit 0
+# Skip only if every path in a successful, well-formed status is docs-only. In -z
+# format a rename/copy has a second NUL-terminated path (the source).
+if python3 -c '
+import subprocess, sys
+try:
+    data = subprocess.check_output(["git", "status", "--porcelain", "-z", "--untracked-files=all"])
+    if data and not data.endswith(b"\0"):
+        sys.exit(1)
+    records = iter(data[:-1].split(b"\0") if data else [])
+    for record in records:
+        if (len(record) < 4 or record[2:3] != b" " or record[:2] == b"  " or
+                (record[:2] != b"??" and any(c not in b" MADRCU" for c in record[:2]))):
+            sys.exit(1)
+        paths = [record[3:]]
+        if b"R" in record[:2] or b"C" in record[:2]:
+            paths.append(next(records))
+        for path in paths:
+            if not path or not (path.startswith(b"docs/") or path.endswith((b".md", b".txt"))):
+                sys.exit(1)
+except Exception:
+    sys.exit(1)
+' 2>/dev/null; then
+  exit 0
+fi
 
 runner="$(python3 -c "import json;print(json.load(open('.quality-kit.json')).get('runner','npm'))" 2>/dev/null)"
 case "$runner" in
