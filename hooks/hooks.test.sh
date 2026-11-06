@@ -112,6 +112,7 @@ cat > "$T/status-bin/git" <<EOF
 #!/usr/bin/env bash
 if [ "\$1" = status ]; then
   if [ "\${BAD_STATUS:-}" = malformed ]; then printf 'R  docs/dest.md\\0'; exit 0; fi
+  if [ "\${BAD_STATUS:-}" = record ]; then cat "$T/status-record"; exit 0; fi
   exit 1
 fi
 exec "$(command -v git)" "\$@"
@@ -123,6 +124,32 @@ for mode in failed malformed; do
   [ "$rc" = 2 ] && [ -e "$RF/validate-ran" ] && ok "$mode status validates" \
     || bad "$mode status validates" "rc=$rc"
 done
+
+# Synthetic porcelain records exercise malformed docs-looking paths and copy sources.
+status_record() { # description, expected exit; caller writes the NUL records first
+  local label=$1 expected=$2 rc
+  rm -f "$RF/validate-ran"
+  set +e; (cd "$RF" && echo '{}' | BAD_STATUS=record PATH="$T/status-bin:$PATH" bash "$H" 2>/dev/null); rc=$?; set -e
+  if [ "$rc" = "$expected" ] && { { [ "$expected" = 2 ] && [ -e "$RF/validate-ran" ]; } || { [ "$expected" = 0 ] && [ ! -e "$RF/validate-ran" ]; }; }; then
+    ok "$label"
+  else
+    bad "$label" "rc=$rc expected=$expected"
+  fi
+}
+for path in 'docs/../src.ts' 'docs/./note.md' 'docs//note.md' '/docs/note.md' 'docs/note.md/'; do
+  printf ' M %s\0' "$path" > "$T/status-record"
+  status_record "invalid path $path validates" 2
+done
+printf 'RR docs/dest.md\0docs/source.md\0' > "$T/status-record"
+status_record 'invalid status combination validates' 2
+printf 'R  docs/dest.md\0docs/../source.md\0' > "$T/status-record"
+status_record 'invalid rename source validates' 2
+printf 'C  docs/dest.md\0src/source.ts\0' > "$T/status-record"
+status_record 'copy source code validates' 2
+printf 'C  docs/dest.md\0docs/source.txt\0' > "$T/status-record"
+status_record 'docs-only copy skips' 0
+printf 'C  docs/dest.md\0docs/../source.md\0' > "$T/status-record"
+status_record 'invalid copy source validates' 2
 U="$(mktemp -d)"
 (cd "$U" && git init -q . && mkdir .quality && cp "$SV" $H && echo '{}' | bash $H) && ok "unstamped repo no-op" || bad "unstamped repo no-op" "blocked"
 
