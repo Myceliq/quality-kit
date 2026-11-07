@@ -83,67 +83,72 @@ set +e; err=$( (cd "$RF" && echo '{}' | bash $H) 2>&1 >/dev/null ); rc=$?; set -
 set +e; (cd "$RF" && printf '{"stop_hook_active": true}' | bash $H 2>/dev/null); rc=$?; set -e
 [ "$rc" = 0 ] && ok "stop_hook_active releases (no livelock)" || bad "stop_hook_active releases (no livelock)" "rc=$rc"
 
-# Runner configuration is checked only when validation is required. Build this baseline
-# with Git plumbing so no product or fixture commit hooks are bypassed.
-C="$T/config-repo"; mkdir -p "$C/.quality" "$T/runner-bin"
-cp "$SV" "$C/.quality/stop-validate.sh"
-printf '{}\n' > "$C/.quality-kit.json"
-printf 'baseline\n' > "$C/code.ts"
-git -C "$C" init -q
-git -C "$C" add -A
-tree=$(git -C "$C" write-tree)
-commit=$(printf 'config baseline\n' | git -C "$C" -c user.name=t -c user.email=t@t commit-tree "$tree")
-git -C "$C" update-ref HEAD "$commit"
-printf 'dirty\n' > "$C/code.ts"
+# Keep every runner probe, config, output, and witness outside the legacy cleanup trap.
+CONFIG_FIXTURES="$(mktemp -d)"
+printf 'runner fixtures (left intact): %s\n' "$CONFIG_FIXTURES"
+mkdir -p "$CONFIG_FIXTURES/bin"
 for tool in npm make; do
-  cat > "$T/runner-bin/$tool" <<'EOF'
+  cat > "$CONFIG_FIXTURES/bin/$tool" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$(basename "$0") $*" > runner-witness
 exit "${RUNNER_EXIT:-0}"
 EOF
-  chmod +x "$T/runner-bin/$tool"
+  chmod +x "$CONFIG_FIXTURES/bin/$tool"
 done
-config_stop() {
-  rm -f "$C/runner-witness"
+probe_no=0
+config_stop() { # config, payload, optional invalid UTF-8 flag
+  probe_no=$((probe_no + 1))
+  C="$CONFIG_FIXTURES/case-$probe_no"
+  mkdir -p "$C/.quality"
+  cp "$SV" "$C/.quality/stop-validate.sh"
+  printf '{}\n' > "$C/.quality-kit.json"
+  printf 'baseline\n' > "$C/code.ts"
+  git -C "$C" init -q
+  git -C "$C" add -A
+  local tree commit
+  tree=$(git -C "$C" write-tree)
+  commit=$(printf 'config baseline\n' | git -C "$C" -c user.name=t -c user.email=t@t commit-tree "$tree")
+  git -C "$C" update-ref HEAD "$commit"
+  printf 'dirty\n' > "$C/code.ts"
+  if [ "${3:-}" = invalid-utf8 ]; then
+    printf '{"runner":"secret-marker\377"}' > "$C/.quality-kit.json"
+  else
+    printf '%s' "$1" > "$C/.quality-kit.json"
+  fi
+  printf '%s' "$2" > "$C/payload.json"
   set +e
-  err=$(cd "$C" && printf '%s' "${1:-'{}'}" | PATH="$T/runner-bin:$PATH" bash "$H" 2>&1)
+  (cd "$C" && PATH="$CONFIG_FIXTURES/bin:$PATH" bash "$H" < payload.json > hook-output 2>&1)
   rc=$?
   set -e
+  err=$(cat "$C/hook-output")
 }
 case_no=0
 for config in '{' 'null' '[]' '42' '"scalar"' \
   '{"runner":null}' '{"runner":true}' '{"runner":[]}' '{"runner":{}}' \
   '{"runner":"secret-marker"}' '{"runner":""}' '{"runner":" "}' '{"runner":"npm\n"}'; do
   case_no=$((case_no + 1))
-  printf '%s' "$config" > "$C/.quality-kit.json"
-  config_stop '{}'
+  config_stop "$config" '{}'
   [ "$rc" = 2 ] && [ ! -e "$C/runner-witness" ] && echo "$err" | grep -qi 'config' && ! echo "$err" | grep -q 'secret-marker' \
     && ok "invalid runner config blocks: case $case_no" || bad "invalid runner config blocks: case $case_no" "rc=$rc err=$err"
 done
-printf '%s' '{"runner":"make"}' > "$C/.quality-kit.json"
-chmod 000 "$C/.quality-kit.json"
-config_stop '{}'
-chmod 600 "$C/.quality-kit.json"
-[ "$rc" = 2 ] && [ ! -e "$C/runner-witness" ] && echo "$err" | grep -qi 'config' \
-  && ok 'unreadable config blocks' || bad 'unreadable config blocks' "rc=$rc err=$err"
+config_stop '' '{}' invalid-utf8
+[ "$rc" = 2 ] && [ ! -e "$C/runner-witness" ] && echo "$err" | grep -qi 'config' && ! echo "$err" | grep -q 'secret-marker' \
+  && ok 'invalid UTF-8 config loading blocks without leaking' || bad 'invalid UTF-8 config loading blocks without leaking' "rc=$rc err=$err"
 for config in '{}' '{"runner":"npm"}' '{"runner":"make"}'; do
-  printf '%s' "$config" > "$C/.quality-kit.json"
-  config_stop '{}'
+  config_stop "$config" '{}'
   expected='npm run --silent validate:fast'; [ "$config" != '{"runner":"make"}' ] || expected='make validate-fast'
   [ "$rc" = 0 ] && [ -f "$C/runner-witness" ] && [ "$(cat "$C/runner-witness")" = "$expected" ] \
     && ok "valid runner dispatch: $config" || bad "valid runner dispatch: $config" "rc=$rc err=$err"
 done
-printf '%s' '{"runner":"npm"}' > "$C/.quality-kit.json"
 export RUNNER_EXIT=1
-config_stop '{}'
+config_stop '{"runner":"npm"}' '{}'
 [ "$rc" = 2 ] && [ -f "$C/runner-witness" ] && echo "$err" | grep -q 'validate:fast FAILED' \
   && ok 'npm runner failure blocks' || bad 'npm runner failure blocks' "rc=$rc err=$err"
-config_stop '{"stop_hook_active":true}'
+config_stop '{"runner":"npm"}' '{"stop_hook_active":true}'
 [ "$rc" = 0 ] && [ -f "$C/runner-witness" ] && echo "$err" | grep -q 'releasing stop' \
   && ok 'npm runner failure active-stop releases' || bad 'npm runner failure active-stop releases' "rc=$rc err=$err"
 unset RUNNER_EXIT
-printf '%s' '{"runner":"secret-marker"}' > "$C/.quality-kit.json"
-config_stop '{"stop_hook_active":true}'
+config_stop '{"runner":"secret-marker"}' '{"stop_hook_active":true}'
 [ "$rc" = 0 ] && [ ! -e "$C/runner-witness" ] && echo "$err" | grep -qi 'releasing stop' && ! echo "$err" | grep -q 'secret-marker' \
   && ok 'invalid config active-stop releases explicitly' || bad 'invalid config active-stop releases explicitly' "rc=$rc err=$err"
 
