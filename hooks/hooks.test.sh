@@ -83,6 +83,107 @@ set +e; err=$( (cd "$RF" && echo '{}' | bash $H) 2>&1 >/dev/null ); rc=$?; set -
 set +e; (cd "$RF" && printf '{"stop_hook_active": true}' | bash $H 2>/dev/null); rc=$?; set -e
 [ "$rc" = 0 ] && ok "stop_hook_active releases (no livelock)" || bad "stop_hook_active releases (no livelock)" "rc=$rc"
 
+# Runner configuration is checked only when validation is required. Build this baseline
+# with Git plumbing so no product or fixture commit hooks are bypassed.
+C="$T/config-repo"; mkdir -p "$C/.quality" "$T/runner-bin"
+cp "$SV" "$C/.quality/stop-validate.sh"
+printf '{}\n' > "$C/.quality-kit.json"
+printf 'baseline\n' > "$C/code.ts"
+git -C "$C" init -q
+git -C "$C" add -A
+tree=$(git -C "$C" write-tree)
+commit=$(printf 'config baseline\n' | git -C "$C" -c user.name=t -c user.email=t@t commit-tree "$tree")
+git -C "$C" update-ref HEAD "$commit"
+printf 'dirty\n' > "$C/code.ts"
+for tool in npm make; do
+  cat > "$T/runner-bin/$tool" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$(basename "$0") $*" > runner-witness
+exit "${RUNNER_EXIT:-0}"
+EOF
+  chmod +x "$T/runner-bin/$tool"
+done
+config_stop() {
+  rm -f "$C/runner-witness"
+  set +e
+  err=$(cd "$C" && printf '%s' "${1:-'{}'}" | PATH="$T/runner-bin:$PATH" bash "$H" 2>&1)
+  rc=$?
+  set -e
+}
+case_no=0
+for config in '{' 'null' '[]' '42' '"scalar"' \
+  '{"runner":null}' '{"runner":true}' '{"runner":[]}' '{"runner":{}}' \
+  '{"runner":"secret-marker"}' '{"runner":""}' '{"runner":" "}' '{"runner":"npm\n"}'; do
+  case_no=$((case_no + 1))
+  printf '%s' "$config" > "$C/.quality-kit.json"
+  config_stop '{}'
+  [ "$rc" = 2 ] && [ ! -e "$C/runner-witness" ] && echo "$err" | grep -qi 'config' && ! echo "$err" | grep -q 'secret-marker' \
+    && ok "invalid runner config blocks: case $case_no" || bad "invalid runner config blocks: case $case_no" "rc=$rc err=$err"
+done
+printf '%s' '{"runner":"make"}' > "$C/.quality-kit.json"
+chmod 000 "$C/.quality-kit.json"
+config_stop '{}'
+chmod 600 "$C/.quality-kit.json"
+[ "$rc" = 2 ] && [ ! -e "$C/runner-witness" ] && echo "$err" | grep -qi 'config' \
+  && ok 'unreadable config blocks' || bad 'unreadable config blocks' "rc=$rc err=$err"
+for config in '{}' '{"runner":"npm"}' '{"runner":"make"}'; do
+  printf '%s' "$config" > "$C/.quality-kit.json"
+  config_stop '{}'
+  expected='npm run --silent validate:fast'; [ "$config" != '{"runner":"make"}' ] || expected='make validate-fast'
+  [ "$rc" = 0 ] && [ -f "$C/runner-witness" ] && [ "$(cat "$C/runner-witness")" = "$expected" ] \
+    && ok "valid runner dispatch: $config" || bad "valid runner dispatch: $config" "rc=$rc err=$err"
+done
+printf '%s' '{"runner":"npm"}' > "$C/.quality-kit.json"
+export RUNNER_EXIT=1
+config_stop '{}'
+[ "$rc" = 2 ] && [ -f "$C/runner-witness" ] && echo "$err" | grep -q 'validate:fast FAILED' \
+  && ok 'npm runner failure blocks' || bad 'npm runner failure blocks' "rc=$rc err=$err"
+config_stop '{"stop_hook_active":true}'
+[ "$rc" = 0 ] && [ -f "$C/runner-witness" ] && echo "$err" | grep -q 'releasing stop' \
+  && ok 'npm runner failure active-stop releases' || bad 'npm runner failure active-stop releases' "rc=$rc err=$err"
+unset RUNNER_EXIT
+printf '%s' '{"runner":"secret-marker"}' > "$C/.quality-kit.json"
+config_stop '{"stop_hook_active":true}'
+[ "$rc" = 0 ] && [ ! -e "$C/runner-witness" ] && echo "$err" | grep -qi 'releasing stop' && ! echo "$err" | grep -q 'secret-marker' \
+  && ok 'invalid config active-stop releases explicitly' || bad 'invalid config active-stop releases explicitly' "rc=$rc err=$err"
+
+# Keep these pathname fixtures outside the legacy suite's cleanup directory for inspection.
+N="$(mktemp -d)"
+printf 'pathname fixtures (left intact): %s\n' "$N"
+newline_primary="$N/primary"
+newline_linked="$N/linked"$'\n'
+newline_root="$N/root"$'\n'
+newline_fixture() { # $1=repo root, baseline made with plumbing only
+  mkdir -p "$1/.quality" "$1/nested"
+  cp "$SV" "$1/.quality/stop-validate.sh"
+  printf '{"runner":"make"}\n' > "$1/.quality-kit.json"
+  printf 'validate-fast:\n\t@touch validate-ran; exit 1\n' > "$1/Makefile"
+  printf 'baseline\n' > "$1/nested/code.ts"
+  git -C "$1" init -q
+  git -C "$1" add -A
+  local tree commit
+  tree=$(git -C "$1" write-tree)
+  commit=$(printf 'pathname baseline\n' | git -C "$1" -c user.name=t -c user.email=t@t commit-tree "$tree")
+  git -C "$1" update-ref HEAD "$commit"
+}
+newline_fixture "$newline_primary"
+git -C "$newline_primary" worktree add -q --detach "$newline_linked"
+printf 'dirty\n' > "$newline_linked/nested/code.ts"
+set +e
+err=$(cd "$newline_primary" && python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1]}))' "$newline_linked" | bash "$H" 2>&1); rc=$?
+set -e
+[ "$rc" = 2 ] && [ -e "$newline_linked/validate-ran" ] && [ ! -e "$newline_primary/validate-ran" ] \
+  && ok 'newline linked root validates linked tree, not clean primary' \
+  || bad 'newline linked root validates linked tree, not clean primary' "rc=$rc linked=$([ -e "$newline_linked/validate-ran" ] && echo yes || echo no) primary=$([ -e "$newline_primary/validate-ran" ] && echo yes || echo no) err=$err"
+newline_fixture "$newline_root"
+printf 'dirty\n' > "$newline_root/nested/code.ts"
+set +e
+err=$(cd "$newline_root/nested" && printf '{}' | bash ../.quality/stop-validate.sh 2>&1); rc=$?
+set -e
+[ "$rc" = 2 ] && [ -e "$newline_root/validate-ran" ] \
+  && ok 'newline primary root selected from nested fallback cwd' \
+  || bad 'newline primary root selected from nested fallback cwd' "rc=$rc witness=$([ -e "$newline_root/validate-ran" ] && echo yes || echo no) err=$err"
+
 rename_case() { # source, destination, expected exit
   local src=$1 dst=$2 expected=$3 tree commit rc err
   fixture RR 1

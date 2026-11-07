@@ -21,14 +21,25 @@ payload="$(cat 2>/dev/null || true)"
 #
 # Falls back to the hook's own cwd whenever the payload carries no usable directory, so a runtime
 # that omits the field, or names one that has since been removed, behaves exactly as before.
-session_cwd="$(printf '%s' "$payload" | python3 -c "import json,sys
+# Preserve pathname newlines while removing only the command's output terminator.
+capture_line() {
+  local value
+  value="$("$@" && printf '.')" || return 1
+  value=${value%.}
+  REPLY=${value%$'\n'}
+}
+capture_line python3 -c "import json,sys
 try: print(json.load(sys.stdin).get('cwd','') or '')
-except Exception: print('')" 2>/dev/null)"
+except Exception: print('')" <<<"$payload" 2>/dev/null || REPLY=""
+session_cwd=$REPLY
 root=""
 if [ -n "$session_cwd" ] && [ -d "$session_cwd" ]; then
-  root="$(git -C "$session_cwd" rev-parse --show-toplevel 2>/dev/null)" || root=""
+  capture_line git -C "$session_cwd" rev-parse --show-toplevel 2>/dev/null && root=$REPLY
 fi
-[ -n "$root" ] || root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+if [ -z "$root" ]; then
+  capture_line git rev-parse --show-toplevel 2>/dev/null || exit 0
+  root=$REPLY
+fi
 [ -n "$root" ] || exit 0
 
 # ...but only this project's own trees. The session's cwd can be any directory, including a clone
@@ -40,13 +51,19 @@ fi
 # resolved to a physical absolute path first: `--git-common-dir` prints `.git` for a primary
 # checkout and an absolute path for a worktree, and either may sit behind a symlink.
 # Any other tree, a submodule included (its common dir is its own), exits 0 untouched.
-common_dir() { # $1=dir inside a work tree → physical absolute path of its git common dir
-  local g; g="$(git -C "$1" rev-parse --git-common-dir 2>/dev/null)" || return 1
+physical_dir() { (cd "$1" && cd "$2" && pwd -P); }
+common_dir() { # $1=dir inside a work tree → physical absolute path of its git common dir in REPLY
+  local g
+  capture_line git -C "$1" rev-parse --git-common-dir 2>/dev/null || return 1
+  g=$REPLY
   [ -n "$g" ] || return 1
-  (cd "$1" && cd "$g" && pwd -P) 2>/dev/null
+  capture_line physical_dir "$1" "$g" 2>/dev/null
 }
-own="$(common_dir "$(dirname "${BASH_SOURCE[0]}")")" || exit 0
-theirs="$(common_dir "$root")" || exit 0
+capture_line dirname "${BASH_SOURCE[0]}" || exit 0
+common_dir "$REPLY" || exit 0
+own=$REPLY
+common_dir "$root" || exit 0
+theirs=$REPLY
 [ -n "$own" ] && [ "$own" = "$theirs" ] || exit 0
 
 cd "$root" || exit 0
@@ -82,14 +99,29 @@ except Exception:
   exit 0
 fi
 
-runner="$(python3 -c "import json;print(json.load(open('.quality-kit.json')).get('runner','npm'))" 2>/dev/null)"
-case "$runner" in
-  npm)  cmd=(npm run --silent validate:fast) ;;
-  make) cmd=(make validate-fast) ;;
-  *)    exit 0 ;;
-esac
-
-out="$("${cmd[@]}" 2>&1)"; status=$?
+if runner="$(python3 -c '
+import json, sys
+try:
+    with open(".quality-kit.json") as f:
+        config = json.load(f)
+    if not isinstance(config, dict):
+        sys.exit(1)
+    runner = config.get("runner", "npm")
+    if not isinstance(runner, str) or runner not in ("npm", "make"):
+        sys.exit(1)
+    print(runner)
+except Exception:
+    sys.exit(1)
+' 2>/dev/null)"; then
+  case "$runner" in
+    npm)  cmd=(npm run --silent validate:fast) ;;
+    make) cmd=(make validate-fast) ;;
+  esac
+  out="$("${cmd[@]}" 2>&1)"; status=$?
+else
+  out="Invalid or unreadable .quality-kit.json configuration (runner must be npm or make)."
+  status=1
+fi
 [ "$status" -eq 0 ] && exit 0
 
 active="$(printf '%s' "$payload" | python3 -c "import json,sys
