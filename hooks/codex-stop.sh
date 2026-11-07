@@ -172,7 +172,10 @@ if level != "trusted":
 print(root)
 PY
 
-root="$(printf '%s' "$payload" | python3 -I -c "$RESOLVE" 2>/dev/null)" || exit 0
+# Preserve every pathname byte emitted by the trusted resolver; remove only its framing LF.
+root="$(printf '%s' "$payload" | python3 -I -c "$RESOLVE" 2>/dev/null && printf '.')" || exit 0
+root=${root%.}
+root=${root%$'\n'}
 [ -n "$root" ] && [ -d "$root" ] || exit 0
 
 script="$root/.quality/stop-validate.sh"

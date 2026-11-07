@@ -211,4 +211,66 @@ rm "$CODEX_HOME/config.toml"
 stop "$T/repo"
 [ "$rc" = 0 ] && ! ran "$T/repo" && ok "no config exits 0" || bad "no config exits 0" "rc=$rc"
 
+# Fresh retained fixtures: trust decision and executed script must name the same LF root.
+LF="$(mktemp -d)"
+printf 'codex LF fixtures (left intact): %s\n' "$LF"
+lf_repo() { # native baseline, no commit hooks or hook override
+  mkdir -p "$1/.quality"
+  cat > "$1/.quality/stop-validate.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'ran\n' > "$WITNESS_NAME"
+echo 'LF fixture blocked' >&2
+exit 2
+EOF
+  printf '{}\n' > "$1/.quality-kit.json"
+  command git -C "$1" init -q
+  command git -C "$1" add -A
+  local tree commit
+  tree=$(command git -C "$1" write-tree)
+  commit=$(printf 'LF baseline\n' | command git -C "$1" -c user.name=t -c user.email=t@t commit-tree "$tree")
+  command git -C "$1" update-ref HEAD "$commit"
+}
+lf_config() { # home, trusted main, optional untrusted worktree
+  mkdir -p "$1"
+  python3 - "$@" <<'PYCONFIG'
+import json, sys
+with open(sys.argv[1] + '/config.toml', 'w') as f:
+    f.write('[projects.' + json.dumps(sys.argv[2]) + ']\ntrust_level = "trusted"\n')
+    if len(sys.argv) > 3:
+        f.write('[projects.' + json.dumps(sys.argv[3]) + ']\ntrust_level = "untrusted"\n')
+PYCONFIG
+}
+lf_stop() { # cwd, home, witness name, output file
+  set +e
+  (cd "$1" && python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1]}))' "$1" | CODEX_HOME="$2" WITNESS_NAME="$3" bash "$HOOK") > "$4" 2>&1
+  rc=$?
+  set -e
+}
+lf_root="$LF/trusted"$'\n'
+lf_repo "$lf_root"
+lf_config "$LF/home-no-sibling" "$lf_root"
+lf_stop "$lf_root" "$LF/home-no-sibling" witness-no-sibling "$LF/no-sibling.out"
+[ "$rc" = 2 ] && [ -f "$lf_root/witness-no-sibling" ] \
+  && ok 'trusted LF root runs when stripped sibling is absent' \
+  || bad 'trusted LF root runs when stripped sibling is absent' "rc=$rc witness=$([ -f "$lf_root/witness-no-sibling" ] && echo yes || echo no)"
+lf_repo "$LF/trusted"
+lf_config "$LF/home-sibling" "$lf_root" "$LF/trusted"
+lf_stop "$lf_root" "$LF/home-sibling" witness-sibling "$LF/sibling.out"
+[ "$rc" = 2 ] && [ -f "$lf_root/witness-sibling" ] && [ ! -e "$LF/trusted/witness-sibling" ] \
+  && ok 'trusted LF root runs, untrusted stripped sibling never runs' \
+  || bad 'trusted LF root runs, untrusted stripped sibling never runs' "rc=$rc correct=$([ -f "$lf_root/witness-sibling" ] && echo yes || echo no) wrong=$([ -f "$LF/trusted/witness-sibling" ] && echo yes || echo no)"
+lf_main="$LF/main"; lf_link="$LF/linked"$'\n'
+lf_repo "$lf_main"
+command git -C "$lf_main" worktree add -q --detach "$lf_link"
+lf_config "$LF/home-linked" "$lf_main"
+lf_stop "$lf_link" "$LF/home-linked" witness-linked "$LF/linked.out"
+[ "$rc" = 2 ] && [ -f "$lf_link/witness-linked" ] && [ ! -e "$lf_main/witness-linked" ] \
+  && ok 'LF linked worktree inherits main trust and runs its own gate' \
+  || bad 'LF linked worktree inherits main trust and runs its own gate' "rc=$rc linked=$([ -f "$lf_link/witness-linked" ] && echo yes || echo no)"
+lf_config "$LF/home-untrusted" "$lf_main" "$lf_link"
+lf_stop "$lf_link" "$LF/home-untrusted" witness-untrusted "$LF/untrusted.out"
+[ "$rc" = 0 ] && [ ! -e "$lf_link/witness-untrusted" ] && [ ! -e "$lf_main/witness-untrusted" ] \
+  && ok 'LF linked explicit untrusted overrides main trust' \
+  || bad 'LF linked explicit untrusted overrides main trust' "rc=$rc"
+
 [ "$fail" = 0 ] && echo "ALL PASS" || { echo FAILURES; exit 1; }
