@@ -556,6 +556,11 @@ stamp PR — most of them BLOCK a green stamp.
   kit's pin keeps it (#80: booking-platform's `vitest` bump for an advisory);
   a lower or missing one, or anything that is not an exact version (a range, a
   tag), is set to the pin. After a stamp that raises a pin, refresh the lockfile.
+- **`validate:fast` lints with `--quiet`; `validate` (CI) does not.** The
+  warning list of a mature repo is hundreds of KB per run (booking-platform
+  measured 412 KB against 476 B quiet, #564) and drowns the repair loop.
+  `--quiet` hides warning-severity diagnostics only: an error still exits
+  non-zero, so the gate is unchanged. Full `validate` keeps printing warnings.
 - **`validate:fast` fails on a clean tree only when vitest collected nothing.**
   `vitest run --changed` with no ref selects uncommitted changes, so on a clean
   tree it reports `No test files found` and exits 0; the script turns that into
