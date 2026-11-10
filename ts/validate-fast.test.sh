@@ -30,7 +30,7 @@ cat >"$T/bin/npm" <<'EOF'
 echo "npm $*" >> "$NPM_LOG"
 case "$*" in
   "run format:check") exit "${FAKE_FORMAT_RC:-0}" ;;
-  "run lint")         exit "${FAKE_LINT_RC:-0}" ;;
+  "run lint"|"run lint -- --quiet") exit "${FAKE_LINT_RC:-0}" ;;
   "run typecheck")    exit "${FAKE_TYPECHECK_RC:-0}" ;;
 esac
 exit 97
@@ -133,6 +133,12 @@ for p in "${PROFILES[@]}"; do
     && ok "$p: lint failure short-circuits the test step" \
     || bad "$p: lint failure short-circuits the test step" "rc=$rc vitest=$(cat "$VITEST_LOG")"
 
+  # #564: lint warnings are 400KB per commit; validate:fast asks for errors only. Errors still fail (rc above).
+  fixture R; edit_sum "$R"; run_fast "$R" "$FAST"
+  grep -qx 'npm run lint -- --quiet' "$NPM_LOG" && ! grep -qx 'npm run lint' "$NPM_LOG" \
+    && ok "$p: validate:fast lints with --quiet" \
+    || bad "$p: validate:fast lints with --quiet" "npm=$(cat "$NPM_LOG")"
+
   fixture R; edit_sum "$R"; run_fast "$R" "$FAST" FAKE_VITEST_ZERO=1
   [ "$rc" = 0 ] && has 'No test files found, exiting with code 0' && no_tc \
     && ok "$p: an uncommitted source edit that collects zero tests keeps today's --changed behavior" \
@@ -175,6 +181,8 @@ problems, fast = [], set()
 for p, validate in want.items():
     s = json.load(open(f"{d}/package-scripts.{p}.json"))
     fast.add(s.get("validate:fast"))
+    if "npm run lint -- --quiet &&" not in s.get("validate:fast", "") or "npm run lint &&" in s.get("validate:fast", ""):
+        problems.append(f"{p}: validate:fast must lint with --quiet")
     if s.get("validate:fast") == old:
         problems.append(f"{p}: validate:fast is still the pre-change script")
     if set(s) != set(common) | {"validate", "validate:fast"}:
