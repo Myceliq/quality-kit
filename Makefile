@@ -12,8 +12,8 @@
 #       comments, so the reason lives here.
 # `validate-fast` is the same recipe, not a subset: the box's pre-commit hook and
 # the turn-end stop hook both invoke `make validate-fast` for a make-runner repo,
-# and the kit's own stamped python profile defines the two as identical lines
-# (py/Makefile.quality). A fast/full split would belong to a future stamp.
+# and the kit's stamped python profile defines the two alike except for the burn-down
+# ratchet validate-fast adds (py/Makefile.quality, #1005); the kit has no burn-down.
 #
 # The recipe resolves its own toolchain (#55): a factory run's commit path (hook →
 # make validate-fast) never exports OXLINT_BIN/OXFMT_BIN, and run 1 failed
