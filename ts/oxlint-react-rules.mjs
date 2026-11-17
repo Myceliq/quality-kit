@@ -25,8 +25,8 @@ const report = (context, node, id, text) => {
 // The name `f` of a call to `f(...)` or `React.f(...)`; "" for any other callee.
 // An unqualified name counts as React's unless the file binds it to an import from
 // another module or declares it locally (the vendored examples import nothing).
-// A member call counts only when its object is bound by the `react` import, so a
-// foreign `React` is not React and an aliased namespace import is.
+// A member call counts when its object is not foreign, or is bound by the
+// `react` import (including an aliased namespace import).
 // ponytail: top-level bindings only; use context.sourceCode.getScope for shadowing.
 const isForeign = (context, name) =>
   context.sourceCode.ast.body.some((statement) => {
@@ -69,7 +69,8 @@ const reactCallee = (context, call) => {
     callee.type === "MemberExpression" &&
     !callee.computed &&
     callee.object.type === "Identifier" &&
-    isReactImport(context, callee.object.name)
+    ((callee.object.name === "React" && !isForeign(context, "React")) ||
+      isReactImport(context, callee.object.name))
   ) {
     return callee.property.name;
   }

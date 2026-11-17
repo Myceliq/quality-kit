@@ -353,6 +353,7 @@ PY
   mkdir "$FX"
   printf 'const React = { useState }\nconst [n, setN] = React.useState(makeInitial())\n' >"$FX/foreign.tsx"
   printf 'import * as R from "react"\nconst [n, setN] = R.useState(makeInitial())\n' >"$FX/alias.tsx"
+  printf 'const [n, setN] = React.useState(makeInitial())\n' >"$FX/global.tsx"
   # react_member_cases PLUGIN — lints the two fixtures through PLUGIN with only
   # rerender-lazy-state-init on, printing ok|label or bad|label|why per case.
   react_member_cases() {
@@ -377,6 +378,7 @@ PY
     done <<'CASES'
 clean|a foreign React binding is not treated as React|foreign.tsx
 flagged|an aliased react namespace import is treated as React|alias.tsx
+flagged|an unbound global React is still treated as React|global.tsx
 CASES
   }
   while IFS='|' read -r st label detail; do
