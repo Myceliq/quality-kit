@@ -260,6 +260,8 @@ put() { install -m "$2" "$KIT/$1" "$REPO/$3"; STAMPED+=("$3"); }
 put hooks/format-changed.sh         755 .quality/format-changed.sh
 put hooks/format-changed-adapter.sh 755 .quality/format-changed-adapter.sh
 put hooks/stop-validate.sh          755 .quality/stop-validate.sh
+put bin/ratchet.sh                 755 .quality/ratchet.sh
+put bin/baseline-rules.sh          755 .quality/baseline-rules.sh
 
 RUNNER=npm
 if [ "$PROFILE" = python ]; then

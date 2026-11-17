@@ -59,13 +59,16 @@ chmod +x "$T/bin/npm" "$T/bin/vitest"
 export NPM_LOG="$T/npm.log" VITEST_LOG="$T/vitest.log"
 export PATH="$T/bin:$PATH"
 
-mk_fixture() { # → clean fixture repo (src/sum.ts, src/sum.test.ts, .gitignore, README.md); any failed step → rc 1, no path
+mk_fixture() { # → clean fixture repo (src/sum.ts, src/sum.test.ts, .gitignore, README.md, the stamped ratchet
+  # with an empty burn-down); any failed step → rc 1, no path
   # Checked explicitly: callers run this inside $( ), where set -e does not reach.
   local r s; r="$(mktemp -d "$T/fx.XXXXXX")" || return 1
   (cd "$r" && git init -q && git config core.hooksPath /dev/null && mkdir src \
     && printf 'export const sum = (a: number, b: number) => a + b;\n' > src/sum.ts \
     && printf 'import { expect, it } from "vitest";\nimport { sum } from "./sum";\nit("sums", () => expect(sum(1, 2)).toBe(3));\n' > src/sum.test.ts \
     && printf 'node_modules/\n' > .gitignore && printf '# fixture\n' > README.md \
+    && mkdir .quality && cp "$KITROOT/bin/ratchet.sh" "$KITROOT/bin/baseline-rules.sh" .quality/ \
+    && printf '{"profile": "node", "ruleOverrides": {"burnDown": {}}}' > .quality-kit.json \
     && git add -A && git -c user.name=t -c user.email=t@t commit -q -m fixture) || return 1
   s="$(git -C "$r" status --porcelain --untracked-files=all)" || return 1
   [ -z "$s" ] || return 1
@@ -133,6 +136,16 @@ for p in "${PROFILES[@]}"; do
     && ok "$p: lint failure short-circuits the test step" \
     || bad "$p: lint failure short-circuits the test step" "rc=$rc vitest=$(cat "$VITEST_LOG")"
 
+  # #1005: the burn-down ratchet runs after lint and before typecheck; a failing one stops there.
+  # A ledgered rule and no node_modules: the ratchet's fail-closed toolchain refusal.
+  fixture R; edit_sum "$R"
+  printf '{"profile": "node", "ruleOverrides": {"burnDown": {"no-console": 1}}}' > "$R/.quality-kit.json"
+  run_fast "$R" "$FAST"
+  [ "$rc" != 0 ] && has 'DRIFT: ratchet needs' && grep -qx 'npm run lint -- --quiet' "$NPM_LOG" \
+    && ! grep -qx 'npm run typecheck' "$NPM_LOG" && [ ! -s "$VITEST_LOG" ] \
+    && ok "$p: a failing ratchet stops validate:fast after lint, before typecheck" \
+    || bad "$p: a failing ratchet stops validate:fast after lint, before typecheck" "rc=$rc npm=$(cat "$NPM_LOG") out=$out"
+
   # #564: lint warnings are 400KB per commit; validate:fast asks for errors only. Errors still fail (rc above).
   fixture R; edit_sum "$R"; run_fast "$R" "$FAST"
   grep -qx 'npm run lint -- --quiet' "$NPM_LOG" && ! grep -qx 'npm run lint' "$NPM_LOG" \
@@ -183,6 +196,8 @@ for p, validate in want.items():
     fast.add(s.get("validate:fast"))
     if "npm run lint -- --quiet &&" not in s.get("validate:fast", "") or "npm run lint &&" in s.get("validate:fast", ""):
         problems.append(f"{p}: validate:fast must lint with --quiet")
+    if "npm run lint -- --quiet && bash .quality/ratchet.sh . && npm run typecheck &&" not in s.get("validate:fast", ""):
+        problems.append(f"{p}: validate:fast must run the burn-down ratchet between lint and typecheck (#1005)")
     if s.get("validate:fast") == old:
         problems.append(f"{p}: validate:fast is still the pre-change script")
     if set(s) != set(common) | {"validate", "validate:fast"}:

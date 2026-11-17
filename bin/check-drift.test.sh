@@ -67,6 +67,14 @@ rc=0; out="$(run "$R")" || rc=$?
 [ "$rc" != 0 ] && echo "$out" | grep -q "DRIFT.*oxlint-react-rules.mjs" \
   && ok "edited stamped lint plugin caught" || bad "edited stamped lint plugin caught" "rc=$rc $out"
 
+# #1005: the ratchet validate:fast runs is stamped and byte-owned; an edited copy is drift.
+for f in .quality/ratchet.sh .quality/baseline-rules.sh; do
+  R="$(fresh)"; echo "exit 0" >> "$R/$f"
+  rc=0; out="$(run "$R")" || rc=$?
+  [ "$rc" != 0 ] && echo "$out" | grep -qF "DRIFT: $f diverges from kit" \
+    && ok "edited stamped $f caught" || bad "edited stamped $f caught" "rc=$rc $out"
+done
+
 # The kit stamps no Codex project hooks. A .codex/hooks.json left behind by an earlier stamp —
 # one that runs a stamped .quality/ hook script — is drift; a hooks file of the repo's own is
 # not, even when its hook is a script the repo keeps under .quality/.
@@ -1526,6 +1534,39 @@ qk_mut "$W" "d['ruleOverrides']['burnDown']={'func-style':2}"
 rc=0; out="$(ratchet "$W")" || rc=$?
 [ "$rc" != 0 ] && echo "$out" | grep -q "linter failed to run" && echo "$out" | grep -q "did not produce a valid" \
   && ok "the ratchet surfaces the linter's own failure diagnostic" || bad "the ratchet surfaces the linter's own failure diagnostic" "rc=$rc $out"
+
+# #1005, the armed pair: the STAMPED .quality/ratchet.sh, run as validate:fast runs it (from the
+# repo root, no KIT_DIR), fails on one new hit of a ledgered rule and passes without it. The stub
+# emits its arguments as diagnostic codes verbatim, so typescript(x) -> typescript/x is in play.
+stub_codes() { # stub_codes <repo> <code>...
+  local r="$1"; shift; mkdir -p "$r/node_modules/.bin"
+  { echo '#!/usr/bin/env bash'
+    printf 'python3 -c %q' 'import json,sys;print(json.dumps({"diagnostics":[{"code":c} for c in sys.argv[1:]]}))'
+    printf ' %q' "$@"; echo; } > "$r/node_modules/.bin/oxlint"
+  chmod +x "$r/node_modules/.bin/oxlint"; }
+fast_ratchet() { (cd "$1" && env -u KIT_DIR bash .quality/ratchet.sh . 2>&1); }
+NUA='typescript(no-unsafe-assignment)'
+W="$(fresh)"; qk_mut "$W" "d['ruleOverrides']['burnDown']={'typescript/no-unsafe-assignment':2}"
+stub_codes "$W" "$NUA" "$NUA"
+rc=0; out="$(fast_ratchet "$W")" || rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q "within their recorded counts" \
+  && ok "stamped ratchet passes at the recorded count" || bad "stamped ratchet passes at the recorded count" "rc=$rc $out"
+stub_codes "$W" "$NUA" "$NUA" "$NUA"
+rc=0; out="$(fast_ratchet "$W")" || rc=$?
+[ "$rc" != 0 ] && echo "$out" | grep -q "DRIFT: burn-down regressed: typescript/no-unsafe-assignment 3 > recorded 2" \
+  && ok "stamped ratchet fails on one new hit, naming the rule" || bad "stamped ratchet fails on one new hit, naming the rule" "rc=$rc $out"
+# same verdict through check-drift --ratchet: one implementation behind both entry points
+rc=0; out="$(ratchet "$W")" || rc=$?
+[ "$rc" != 0 ] && echo "$out" | grep -q "DRIFT: burn-down regressed: typescript/no-unsafe-assignment 3 > recorded 2" \
+  && ok "check-drift --ratchet gives the same verdict" || bad "check-drift --ratchet gives the same verdict" "rc=$rc $out"
+rm -r "$W/node_modules"
+rc=0; out="$(fast_ratchet "$W")" || rc=$?
+[ "$rc" != 0 ] && echo "$out" | grep -q "DRIFT: ratchet needs the repo's node_modules" \
+  && ok "stamped ratchet fails closed without the toolchain" || bad "stamped ratchet fails closed without the toolchain" "rc=$rc $out"
+# no ledger: instant pass, no linter needed (node_modules is gone)
+qk_mut "$W" "d['ruleOverrides']['burnDown']={}"
+rc=0; out="$(fast_ratchet "$W")" || rc=$?
+[ "$rc" = 0 ] && ok "stamped ratchet passes an empty burn-down without a linter" || bad "stamped ratchet passes an empty burn-down without a linter" "rc=$rc $out"
 
 # TS ratchet against REAL oxlint + the stamped nextjs config: the stub above
 # fixes the diagnostic shape by hand, so only a real run proves the whole

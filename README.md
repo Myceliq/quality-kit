@@ -561,6 +561,15 @@ stamp PR — most of them BLOCK a green stamp.
   measured 412 KB against 476 B quiet, #564) and drowns the repair loop.
   `--quiet` hides warning-severity diagnostics only: an error still exits
   non-zero, so the gate is unchanged. Full `validate` keeps printing warnings.
+- **`validate:fast` runs the burn-down ratchet; `validate` does not.** After lint,
+  before typecheck, it runs `bash .quality/ratchet.sh .` (python: `make ratchet` inside
+  `validate-fast`): the same re-count CI's `check-drift.sh --ratchet` step runs, from
+  the stamped copies of `bin/ratchet.sh` and `bin/baseline-rules.sh`. A fix that grows
+  a burn-down count, or brings one to zero without removing the entry, now fails
+  locally instead of first at CI's `quality` (booking-platform #1005). It costs one
+  more full lint pass when `burnDown` has entries (booking-platform measured 8–9 s,
+  about `npm run lint -- --quiet`) and nothing when it is empty. Full `validate` is
+  unchanged: CI already runs the ratchet in its own step.
 - **`validate:fast` fails on a clean tree only when vitest collected nothing.**
   `vitest run --changed` with no ref selects uncommitted changes, so on a clean
   tree it reports `No test files found` and exits 0; the script turns that into

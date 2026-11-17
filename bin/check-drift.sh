@@ -61,6 +61,8 @@ same() { cmp -s "$KIT/$1" "$REPO/$2" || err "$2 diverges from kit — restore it
 same hooks/format-changed.sh         .quality/format-changed.sh
 same hooks/format-changed-adapter.sh .quality/format-changed-adapter.sh
 same hooks/stop-validate.sh          .quality/stop-validate.sh
+same bin/ratchet.sh                 .quality/ratchet.sh
+same bin/baseline-rules.sh          .quality/baseline-rules.sh
 # The kit stamps no Codex project hooks any more (stamp.sh says why). A .codex/hooks.json that
 # still runs one of the two scripts earlier kits wired there is that stamp's file, which a
 # re-stamp would have removed. Only those two names: any other hook is the repo's own.
@@ -1515,68 +1517,10 @@ fi
 
 if [ "$RATCHET" = 1 ]; then
   # The counting pass. Needs the repo's linter, so quality.yml runs it after
-  # Install while the static gate above runs before it (cheap-first).
-  BURN="$(python3 -c "
-import json,sys
-ov = json.load(open(sys.argv[1])).get('ruleOverrides') or {}
-ov = ov if isinstance(ov, dict) else {}
-bd = ov.get('burnDown')
-# Coerce a malformed (non-dict) burnDown to {} so the ratchet is a no-op on it:
-# check_overrides above already reports the shape error with its remedy, and a
-# non-dict here would otherwise build a garbage --select and surface a
-# misleading 'linter failed' DRIFT on top of the correct one.
-print(json.dumps(bd if isinstance(bd, dict) else {}))" "$QK")"
-  if [ "$BURN" != "{}" ]; then
-    # Toolchain check FIRST and loudly. baseline-rules.sh returns {} when the
-    # linter is missing, which is indistinguishable from "zero violations" — and
-    # zero would make every entry report "burn-down complete, remove it". A
-    # missing toolchain must fail the gate, never quietly rewrite the burn-down.
-    TOOLING_OK=1
-    if [ "$PROFILE" = python ]; then
-      command -v ruff >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1 || TOOLING_OK=0
-      [ "$TOOLING_OK" = 1 ] || err "ratchet needs ruff on PATH to count burn-down violations — install ruff in the CI job before this step"
-    else
-      [ -x "$REPO/node_modules/.bin/oxlint" ] || TOOLING_OK=0
-      [ "$TOOLING_OK" = 1 ] || err "ratchet needs the repo's node_modules — run it after the Install step"
-    fi
-    if [ "$TOOLING_OK" = 1 ]; then
-      # Counting and rule-id normalization live in baseline-rules.sh — the same
-      # code that seeded these numbers must be the code that re-counts them, or
-      # the two can disagree about what a rule is called and the ratchet silently
-      # compares nothing. --select re-enables the rules the python profile
-      # extend-ignore's; it is a no-op on TS, where they sit at warn already.
-      SEL="$(python3 -c "
-import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
-      # capture the rc without letting set -e abort on it: baseline-rules.sh
-      # exits non-zero (3 not installed, 4 crashed) and prints {} to stdout in
-      # both cases. A crash must not be read as "{}" == "all burn-down
-      # complete" — that would tell an automated repair-loop to delete the
-      # entire ledger over a transient linter crash.
-      # stderr is NOT discarded: only stdout is captured, so baseline-rules.sh's
-      # dirty-tree warning and the linter's own failure text land in the drift
-      # report beside the DRIFT line they explain, without touching ACTUAL.
-      BR_RC=0
-      ACTUAL="$(bash "$KIT/bin/baseline-rules.sh" "$REPO" --select "$SEL")" || BR_RC=$?
-      if [ "$BR_RC" != 0 ]; then
-        err "ratchet: the linter failed to run (baseline-rules.sh exit $BR_RC) — fix the linter/config and re-run; a crashed lint run must not be read as 'all burn-down complete'"
-      else
-        python3 - "$BURN" "$ACTUAL" <<'PY' || fail=1
-import json, sys
-burn, actual = json.loads(sys.argv[1]), json.loads(sys.argv[2])
-rc = 0
-for rule, allowed in sorted(burn.items()):
-    got = actual.get(rule, 0)
-    if got > allowed:
-        rc = 1
-        print(f"DRIFT: burn-down regressed: {rule} {got} > recorded {allowed} — fix the new violations, or bump the count in .quality-kit.json in this PR with justification", file=sys.stderr)
-    elif got == 0:
-        rc = 1
-        print(f"DRIFT: burn-down complete for {rule} — remove the entry from .quality-kit.json ruleOverrides.burnDown", file=sys.stderr)
-sys.exit(rc)
-PY
-      fi
-    fi
-  fi
+  # Install while the static gate above runs before it (cheap-first). The pass
+  # itself is bin/ratchet.sh, the same file validate:fast runs as
+  # .quality/ratchet.sh; its DRIFT lines go to stderr, its success line is dropped.
+  bash "$KIT/bin/ratchet.sh" "$REPO" >/dev/null || fail=1
 fi
 
 [ "$fail" = 0 ] && { echo "drift gate clean (kit $KITV, profile $PROFILE)"; exit 0; }

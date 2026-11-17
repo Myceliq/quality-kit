@@ -7,7 +7,7 @@ Validation contract, identical local and CI (`npm run` / `make` per this repo's
 - `validate` — full gate: format:check → lint → typecheck → unit tests → repo
   extras → build. CI runs exactly this.
 - `validate:fast` (make: `validate-fast`) — repair loop: format:check → lint →
-  typecheck → affected tests. Run after EVERY implementation attempt and
+  burn-down ratchet → typecheck → affected tests. Run after EVERY implementation attempt and
   before reporting done. Never assume a hook already ran it: the Codex
   turn-end gate is a user-level hook that is off until the user has installed
   and approved it and trusted this project in their own Codex config, and it

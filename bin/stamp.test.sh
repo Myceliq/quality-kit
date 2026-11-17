@@ -25,8 +25,14 @@ echo "$first_out"
 
 for f in .quality/format-changed.sh .quality/stop-validate.sh .quality/suppression-baseline.json \
          .quality/manifest.sha256 .quality-kit.json oxlint.config.ts oxfmt.config.ts \
-         tsconfig.quality.json .github/workflows/quality.yml .claude/settings.json; do
+         tsconfig.quality.json .github/workflows/quality.yml .claude/settings.json \
+         .quality/ratchet.sh .quality/baseline-rules.sh; do
   [ -f "$R/$f" ] && ok "stamped $f" || bad "stamped $f" "missing"
+done
+# #1005: validate:fast runs the stamped ratchet; both files are byte-owned like the hooks.
+for f in .quality/ratchet.sh .quality/baseline-rules.sh; do
+  [ -x "$R/$f" ] && grep -q "  $f\$" "$R/.quality/manifest.sha256" \
+    && ok "$f is executable and in the manifest" || bad "$f is executable and in the manifest" "$(cat "$R/.quality/manifest.sha256")"
 done
 
 # The nextjs config loads the kit's custom React rules from jsPlugins files. Each
@@ -156,6 +162,27 @@ bash "$S" "$P" --profile python
   && ok "python profile stamps + Makefile include" || bad "python profile" "files missing"
 python3 -c "import json; assert json.load(open('$P/.quality-kit.json'))['runner']=='make'" \
   && ok "python runner=make" || bad "python runner=make" "wrong runner"
+# #1005: validate-fast runs the stamped ratchet after lint, before typecheck; validate does not.
+out="$(cd "$P" && make --no-print-directory -n validate-fast | tr '\n' '|')"
+[ "$out" = "ruff format --check .|ruff check .|bash .quality/ratchet.sh .|pyright|pytest -q|" ] \
+  && ! (cd "$P" && make -n validate | grep -q ratchet) \
+  && ok "python validate-fast runs the ratchet between lint and typecheck" \
+  || bad "python validate-fast runs the ratchet between lint and typecheck" "$out"
+out="$(cd "$P" && make --no-print-directory -s ratchet 2>&1)" && [ "$out" = "ratchet: no burn-down entries" ] \
+  && ok "python make ratchet passes an empty burn-down" || bad "python make ratchet passes an empty burn-down" "$out"
+# The real run, not -n: make -n prints a `-`-prefixed (ignore-errors) recipe without the `-`, so
+# only executing validate-fast proves a regression stops it. Stub ruff passes format and lint and
+# counts two F401 for the ratchet; pyright/pytest stubs log, so a run past the ratchet shows.
+PV="$(mktemp -d)"; cp -r "$P/." "$PV/"; mkdir "$PV/.stubs"
+printf '#!/usr/bin/env bash\ncase "$*" in *--output-format*) echo %s ;; esac\nexit 0\n' \
+  "'[{\"code\":\"F401\"},{\"code\":\"F401\"}]'" > "$PV/.stubs/ruff"
+for t in pyright pytest; do printf '#!/usr/bin/env bash\necho %s >> "%s/.stubs/ran"\n' "$t" "$PV" > "$PV/.stubs/$t"; done
+chmod +x "$PV/.stubs/"*
+python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['ruleOverrides']['burnDown']={'F401':1}; json.dump(d,open(p,'w'))" "$PV/.quality-kit.json"
+rc=0; out="$(cd "$PV" && PATH="$PV/.stubs:$PATH" make --no-print-directory validate-fast 2>&1)" || rc=$?
+[ "$rc" != 0 ] && echo "$out" | grep -q "DRIFT: burn-down regressed: F401 2 > recorded 1" && [ ! -e "$PV/.stubs/ran" ] \
+  && ok "python validate-fast stops on a burn-down regression, before typecheck and tests" \
+  || bad "python validate-fast stops on a burn-down regression, before typecheck and tests" "rc=$rc ran=$(cat "$PV/.stubs/ran" 2>/dev/null) $out"
 
 rc=0; bash "$S" "$R" --profile bogus 2>/dev/null || rc=$?
 [ "$rc" = 64 ] && ok "unknown profile usage error" || bad "unknown profile usage error" "rc=$rc"
