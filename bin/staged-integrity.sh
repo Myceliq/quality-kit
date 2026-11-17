@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # What:  deterministic staged-INDEX integrity preflight — conflict markers and
 #        whitespace, oversized new blobs, case-fold path collisions, broken and
-#        flattened symlinks.
+#        flattened symlinks, and burn-down ledger regressions (Git + Python 3).
 # Where: quality-kit/bin; called by hooks/git-pre-commit immediately before the
 #        stamped repo's own validate:fast, so it lands before any model review.
 # Why:   validate:fast is a LANGUAGE gate — Pyright, Ruff, tsc, a SLOC budget.
