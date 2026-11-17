@@ -77,7 +77,7 @@ for rule, allowed in sorted(burn.items()):
     got = actual.get(rule, 0)
     if got > allowed:
         rc = 1
-        print(f"DRIFT: burn-down regressed: {rule} {got} > recorded {allowed} — fix the new violations, or bump the count in .quality-kit.json in this PR with justification", file=sys.stderr)
+        print(f"DRIFT: burn-down regressed: {rule} {got} > recorded {allowed} — fix the new violations; a burn-down count never goes up", file=sys.stderr)
     elif got == 0:
         rc = 1
         print(f"DRIFT: burn-down complete for {rule} — remove the entry from .quality-kit.json ruleOverrides.burnDown", file=sys.stderr)
