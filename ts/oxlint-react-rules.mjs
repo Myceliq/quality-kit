@@ -52,7 +52,11 @@ const binding = (context, name) => {
           s.type === "ImportSpecifier"
             ? (s.imported.name ?? s.imported.value)
             : "*";
-        return { from: node.source.value, imported };
+        // `{ default as R }` is the default import spelled out.
+        return {
+          from: node.source.value,
+          imported: imported === "default" ? "*" : imported,
+        };
       }
     } else if (
       (node.type === "FunctionDeclaration" && node.id?.name === name) ||

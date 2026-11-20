@@ -38,8 +38,9 @@ printf 'import { useEffect } from "react";\nexport function C() { useEffect(() =
 # The other banned hook, through the React.-qualified callee.
 printf 'import * as React from "react";\nexport function L() { React.useLayoutEffect(() => {}, []); return null; }\n' \
   >"$W/src/app/l.tsx"
-# An aliased named import and a namespace not called React: two diagnostics.
-printf 'import { useEffect as useMount } from "react";\nimport * as R from "react";\nexport function A() { useMount(() => {}, []); R.useEffect(() => {}, []); return null; }\n' \
+# An aliased named import, a namespace not called React and a spelled-out default
+# import: three diagnostics.
+printf 'import { useEffect as useMount } from "react";\nimport * as R from "react";\nimport { default as D } from "react";\nexport function A() { useMount(() => {}, []); R.useEffect(() => {}, []); D.useLayoutEffect(() => {}, []); return null; }\n' \
   >"$W/src/app/a.tsx"
 
 # only LEVEL [DIR TARGET] — run the kit plugin with no-use-effect at LEVEL and no
@@ -66,9 +67,9 @@ if grep -qF "src/app/l.tsx" <<<"$out" && grep -qF "useLayoutEffect is off-limits
 else
   bad "$L" "rc=$rc ${out//$'\n'/ }"
 fi
-L="no-use-effect flags an aliased import and a non-React namespace"
+L="no-use-effect flags an aliased import, a non-React namespace and { default as D }"
 n="$(grep -cF "[src/app/a.tsx:" <<<"$out" || true)"
-[ "$n" = 2 ] && ok "$L" || bad "$L" "want 2 diagnostics in src/app/a.tsx, got $n: ${out//$'\n'/ }"
+[ "$n" = 3 ] && ok "$L" || bad "$L" "want 3 diagnostics in src/app/a.tsx, got $n: ${out//$'\n'/ }"
 
 # The exemption is anchored to the plugin's own directory, the repo root, not to
 # the directory oxlint runs from: from inside src/effects the file keeps its
