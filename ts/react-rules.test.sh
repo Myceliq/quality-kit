@@ -345,6 +345,57 @@ PY
     if [ "$st" = ok ]; then ok "$label"; else bad "$label" "$detail"; fi
   done < <(fixtures "$W/fx.list")
 
+  # #120: a `React.member` call is React's only when `React` is the react import.
+  # `const React = { useState }` is a foreign binding and must not be flagged;
+  # `import * as R from "react"` is the real import and must follow the rule.
+  # No vendored example covers that branch, so these fixtures are written here.
+  FX="$W/react-member"
+  mkdir "$FX"
+  printf 'const React = { useState }\nconst [n, setN] = React.useState(makeInitial())\n' >"$FX/foreign.tsx"
+  printf 'import * as R from "react"\nconst [n, setN] = R.useState(makeInitial())\n' >"$FX/alias.tsx"
+  printf 'const [n, setN] = React.useState(makeInitial())\n' >"$FX/global.tsx"
+  # react_member_cases PLUGIN — lints the two fixtures through PLUGIN with only
+  # rerender-lazy-state-init on, printing ok|label or bad|label|why per case.
+  react_member_cases() {
+    local plugin="$1" label want file rc out
+    while IFS='|' read -r want label file; do
+      python3 - "$plugin" >"$W/react-member.json" <<'PY'
+import json, sys
+print(json.dumps({"jsPlugins": ["./" + sys.argv[1]], "plugins": [],
+                  "categories": {"correctness": "off"},
+                  "rules": {"quality-kit/rerender-lazy-state-init": "error"}}))
+PY
+      rc=0; out="$(cd "$W" && "$OXLINT" --format default -c react-member.json "$FX/$file" 2>&1)" || rc=$?
+      if ! grep -qF "on 1 file with 1 rules" <<<"$out"; then
+        echo "bad|$label|oxlint did not lint the file with the rule alone (rc=$rc): ${out//$'\n'/ }"
+      elif [ "$want" = flagged ] && { [ "$rc" = 0 ] || ! grep -qF "quality-kit/rerender-lazy-state-init" <<<"$out"; }; then
+        echo "bad|$label|want a non-zero exit with the rule, got rc=$rc: ${out//$'\n'/ }"
+      elif [ "$want" = clean ] && { [ "$rc" != 0 ] || grep -qF "quality-kit/rerender-lazy-state-init" <<<"$out"; }; then
+        echo "bad|$label|want a zero exit with no rule diagnostic, got rc=$rc: ${out//$'\n'/ }"
+      else
+        echo "ok|$label"
+      fi
+    done <<'CASES'
+clean|a foreign React binding is not treated as React|foreign.tsx
+flagged|an aliased react namespace import is treated as React|alias.tsx
+flagged|an unbound global React is still treated as React|global.tsx
+CASES
+  }
+  while IFS='|' read -r st label detail; do
+    if [ "$st" = ok ]; then ok "$label"; else bad "$label" "$detail"; fi
+  done < <(react_member_cases oxlint-react-rules.mjs)
+  # Each fixture must fail with the binding check removed (the old `React` name
+  # test only), so they prove the check and not just the rule.
+  sed 's/isReactImport(context, callee.object.name)/callee.object.name === "React"/' \
+    "$W/oxlint-react-rules.mjs" >"$W/oxlint-react-rules-unchecked.mjs"
+  unchecked_bad="$(react_member_cases oxlint-react-rules-unchecked.mjs | grep -c '^bad|' || true)"
+  if [ "$unchecked_bad" = 2 ]; then
+    ok "arm: each React.member fixture fails with the binding check removed"
+  else
+    bad "arm: each React.member fixture fails with the binding check removed" \
+      "want both fixtures to flip, got $unchecked_bad"
+  fi
+
   # Agent detection must not change the fixture result or its summary.
   AGENT="fixture lint ignores an agent environment"
   python3 "$TMP/examples.py" "$RULES" "$W/fx-agent" js-flatmap-filter >"$W/fx-agent.list"
