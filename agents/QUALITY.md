@@ -33,11 +33,8 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
   PR as the code it covers:
   - `burnDown` (`rule → count`) — a temporary, counted allowance. CI re-counts
     every run: the count may only shrink, and when it reaches zero the entry
-    must be removed. If new violations are genuinely unavoidable, the
-    sanctioned path is to raise that rule's count in `.quality-kit.json` in
-    the same PR (a diff-visible, reviewed bump, justified in the PR body) —
-    the same kind of sanctioned staging as `pendingFlags`. Writing a
-    justification without raising the count does not pass the ratchet.
+    must be removed. A burn-down count may only go down; only a kit-version
+    bump may seed or raise a rule's starting count.
   - `permanent` (`rule → {level, why}`) — a rule that genuinely never fits this
     repo. `level` is `off` or `warn` (python: `off` only — ruff has no warn
     severity). `why` is required and must say what makes the rule wrong here,
