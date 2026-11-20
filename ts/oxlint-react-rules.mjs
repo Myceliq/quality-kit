@@ -6,8 +6,21 @@
 //       vendored incorrect and correct examples by ts/react-rules.test.sh.
 //       oxlint prints a plugin rule as `quality-kit(<id>)`, so every message
 //       ends with the `quality-kit/<id>` name the config and coverage.json use.
+//       no-use-effect is the one rule not named after a Vercel rule: it bans a
+//       primitive rather than deciding one rule's examples, and its own test is
+//       ts/no-use-effect.test.sh.
+
+import path from "node:path";
 
 const PLUGIN = "quality-kit";
+// The lint root: stamp.sh writes this plugin beside oxlint.config.ts at the repo
+// root, so its own directory does not move with the directory oxlint runs from.
+const ROOT = import.meta.dirname;
+// A directory segment named `effects`, matched on the path relative to ROOT, so a
+// checkout that itself sits under a directory called `effects` is still checked.
+// Either separator, since path.relative returns `\` on Windows.
+const EFFECTS_DIR = /(?:^|[/\\])effects[/\\]/u;
+const EFFECT_HOOKS = new Set(["useEffect", "useLayoutEffect"]);
 const SCROLL_BLOCKING_EVENTS = new Set([
   "mousewheel",
   "touchmove",
@@ -22,54 +35,67 @@ const report = (context, node, id, text) => {
   context.report({ message: `${text} (${PLUGIN}/${id})`, node });
 };
 
-// The name `f` of a call to `f(...)` or `React.f(...)`; "" for any other callee.
-// An unqualified name counts as React's unless the file binds it to an import from
-// another module or declares it locally (the vendored examples import nothing).
-// A member call counts when its object is not foreign, or is bound by the
-// `react` import (including an aliased namespace import).
+// How the top level of this file binds `name`: `{ from, imported }` for an import
+// (`imported` is "*" for a namespace or default import), `{ from: "" }` for a local
+// function or variable declaration, undefined when nothing binds it.
 // ponytail: top-level bindings only; use context.sourceCode.getScope for shadowing.
-const isForeign = (context, name) =>
-  context.sourceCode.ast.body.some((statement) => {
+const binding = (context, name) => {
+  for (const statement of context.sourceCode.ast.body) {
     let node = statement;
     if (node.type === "ExportNamedDeclaration" && node.declaration) {
       node = node.declaration;
     }
     if (node.type === "ImportDeclaration") {
-      return (
-        node.source.value !== "react" &&
-        node.specifiers.some((s) => s.local.name === name)
-      );
+      const s = node.specifiers.find((x) => x.local.name === name);
+      if (s) {
+        const imported =
+          s.type === "ImportSpecifier"
+            ? (s.imported.name ?? s.imported.value)
+            : "*";
+        // `{ default as R }` is the default import spelled out.
+        return {
+          from: node.source.value,
+          imported: imported === "default" ? "*" : imported,
+        };
+      }
+    } else if (
+      (node.type === "FunctionDeclaration" && node.id?.name === name) ||
+      (node.type === "VariableDeclaration" &&
+        node.declarations.some(
+          (d) => d.id.type === "Identifier" && d.id.name === name
+        ))
+    ) {
+      return { from: "" };
     }
-    if (node.type === "FunctionDeclaration") {
-      return node.id?.name === name;
-    }
-    return (
-      node.type === "VariableDeclaration" &&
-      node.declarations.some(
-        (d) => d.id.type === "Identifier" && d.id.name === name
-      )
-    );
-  });
+  }
+};
 
-// Whether `name` is bound at the top level by an import from "react".
-const isReactImport = (context, name) =>
-  context.sourceCode.ast.body.some(
-    (statement) =>
-      statement.type === "ImportDeclaration" &&
-      statement.source.value === "react" &&
-      statement.specifiers.some((s) => s.local.name === name)
-  );
+// Whether `name` is bound at the top level to a namespace or default import of "react".
+const isReactImport = (context, name) => {
+  const b = binding(context, name);
+  return b?.from === "react" && b.imported === "*";
+};
 
+// The React export a call to `f(...)` or `ns.f(...)` invokes; "" for any other callee.
+// An unqualified name counts as React's unless the file binds it to an import from
+// another module or declares it locally (the vendored examples import nothing), and
+// a name imported from "react" under an alias resolves to the export it aliases. A
+// qualified call counts when its object is an unbound global `React` or a namespace
+// or default import of "react" (#120: `const React = { useState }` is not React).
 const reactCallee = (context, call) => {
   const { callee } = call;
   if (callee.type === "Identifier") {
-    return isForeign(context, callee.name) ? "" : callee.name;
+    const b = binding(context, callee.name);
+    if (!b) {
+      return callee.name;
+    }
+    return b.from === "react" && b.imported !== "*" ? b.imported : "";
   }
   if (
     callee.type === "MemberExpression" &&
     !callee.computed &&
     callee.object.type === "Identifier" &&
-    ((callee.object.name === "React" && !isForeign(context, "React")) ||
+    ((callee.object.name === "React" && !binding(context, "React")) ||
       isReactImport(context, callee.object.name))
   ) {
     return callee.property.name;
@@ -176,6 +202,26 @@ const rules = {
               node,
               "js-flatmap-filter",
               ".map(...).filter(Boolean) builds an intermediate array and iterates twice; use .flatMap() and return [] for the dropped items"
+            );
+          }
+        },
+      };
+    },
+  },
+  "no-use-effect": {
+    create(context) {
+      if (EFFECTS_DIR.test(path.relative(ROOT, context.filename))) {
+        return {};
+      }
+      return {
+        CallExpression(node) {
+          const name = reactCallee(context, node);
+          if (EFFECT_HOOKS.has(name)) {
+            report(
+              context,
+              node,
+              "no-use-effect",
+              `${name} is off-limits outside an effects/ directory: it is usually derived state (compute it during render), an event handler (move the code there) or data fetching (use a server component or route). A real subscription to an external system goes in effects/ as a named hook with its own test.`
             );
           }
         },
