@@ -37,10 +37,12 @@ try {
 // the very bug `at()` exists to prevent.
 const local = {
   // The kit's own rules for the `custom` rows of Vercel's React rules
-  // (quality-kit ts/react-rules/coverage.json), from the jsPlugins file below.
+  // (quality-kit ts/react-rules/coverage.json), from the jsPlugins file below,
+  // plus no-use-effect, which bans raw useEffect/useLayoutEffect outside effects/.
   "quality-kit/async-parallel": "error",
   "quality-kit/client-passive-event-listeners": "error",
   "quality-kit/js-flatmap-filter": "error",
+  "quality-kit/no-use-effect": "error",
   "quality-kit/react19-no-forwardref": "error",
   "quality-kit/rerender-lazy-state-init": "error",
   // Keep the rule for `return undefined` / `x = undefined`, but stop it
