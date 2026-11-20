@@ -4,7 +4,7 @@
   "private": true,
   "description": "Pinned oxlint+ultracite+oxfmt+vitest toolchain for quality-kit CI (the config integration tests, and real vitest for kit suites, #69). Every version must equal quality-kit/ts/pins.json — ci/toolchain-pins.test.sh fails otherwise; regenerate the lockfile with npm install here when pins.json moves.",
   "dependencies": {
-    "oxfmt": "0.59.0",
+    "oxfmt": "0.67.0",
     "oxlint": "1.74.0",
     "ultracite": "7.9.4",
     "vitest": "4.1.11"
