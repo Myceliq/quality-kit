@@ -15,8 +15,8 @@ import path from "node:path";
 const PLUGIN = "quality-kit";
 // A directory segment named `effects`, matched on the path relative to the lint
 // root, so a checkout that itself sits under a directory called `effects` is
-// still checked.
-const EFFECTS_DIR = /(?:^|\/)effects\//u;
+// still checked. Either separator, since path.relative returns `\` on Windows.
+const EFFECTS_DIR = /(?:^|[/\\])effects[/\\]/u;
 const EFFECT_HOOKS = new Set(["useEffect", "useLayoutEffect"]);
 const SCROLL_BLOCKING_EVENTS = new Set([
   "mousewheel",
@@ -187,12 +187,13 @@ const rules = {
       }
       return {
         CallExpression(node) {
-          if (EFFECT_HOOKS.has(reactCallee(context, node))) {
+          const name = reactCallee(context, node);
+          if (EFFECT_HOOKS.has(name)) {
             report(
               context,
               node,
               "no-use-effect",
-              "useEffect is off-limits outside an effects/ directory: it is usually derived state (compute it during render), an event handler (move the code there) or data fetching (use a server component or route). A real subscription to an external system goes in effects/ as a named hook with its own test."
+              `${name} is off-limits outside an effects/ directory: it is usually derived state (compute it during render), an event handler (move the code there) or data fetching (use a server component or route). A real subscription to an external system goes in effects/ as a named hook with its own test.`
             );
           }
         },

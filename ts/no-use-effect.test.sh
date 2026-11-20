@@ -35,10 +35,13 @@ ln -s "$NM" "$W/node_modules"
 cp "$KITROOT/ts/oxlint-react-rules.mjs" "$W/"
 printf 'import { useEffect } from "react";\nexport function C() { useEffect(() => {}, []); return null; }\n' \
   | tee "$W/src/app/c.tsx" >"$W/src/effects/c.tsx"
+# The other banned hook, through the React.-qualified callee.
+printf 'import * as React from "react";\nexport function L() { React.useLayoutEffect(() => {}, []); return null; }\n' \
+  >"$W/src/app/l.tsx"
 
 # only LEVEL — run the kit plugin with no-use-effect at LEVEL and no other rule,
-# over both fixture files; sets $out and $rc. "on 2 files" is oxlint's own summary
-# (explicit default format keeps it under agent detection): both files were linted,
+# over every fixture file; sets $out and $rc. "on 3 files" is oxlint's own summary
+# (explicit default format keeps it under agent detection): every file was linted,
 # so a clean src/effects/c.tsx is the exemption, not a file that never ran.
 only() {
   printf '{"jsPlugins":["./oxlint-react-rules.mjs"],"plugins":[],"categories":{"correctness":"off"},"rules":{"quality-kit/no-use-effect":"%s"}}\n' "$1" >"$W/only.json"
@@ -47,8 +50,14 @@ only() {
 
 only error
 L="no-use-effect flags src/app/c.tsx and exempts the identical src/effects/c.tsx"
-if [ "$rc" != 0 ] && grep -qF "on 2 files" <<<"$out" && grep -qF "src/app/c.tsx" <<<"$out" \
+if [ "$rc" != 0 ] && grep -qF "on 3 files" <<<"$out" && grep -qF "src/app/c.tsx" <<<"$out" \
   && grep -qF "quality-kit/no-use-effect" <<<"$out" && ! grep -qF "src/effects/c.tsx" <<<"$out"; then
+  ok "$L"
+else
+  bad "$L" "rc=$rc ${out//$'\n'/ }"
+fi
+L="no-use-effect flags React.useLayoutEffect and names that hook"
+if grep -qF "src/app/l.tsx" <<<"$out" && grep -qF "useLayoutEffect is off-limits" <<<"$out"; then
   ok "$L"
 else
   bad "$L" "rc=$rc ${out//$'\n'/ }"
@@ -56,7 +65,7 @@ fi
 
 only off
 L="armed control: with no-use-effect off the same run exits 0"
-if [ "$rc" = 0 ] && grep -qF "on 2 files" <<<"$out"; then ok "$L"; else bad "$L" "rc=$rc ${out//$'\n'/ }"; fi
+if [ "$rc" = 0 ] && grep -qF "on 3 files" <<<"$out"; then ok "$L"; else bad "$L" "rc=$rc ${out//$'\n'/ }"; fi
 
 # The shipped nextjs config runs the rule at error, and a burnDown entry for it
 # downgrades it to warn, as bump-pin.sh's seeding relies on.
