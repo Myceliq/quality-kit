@@ -420,12 +420,15 @@ never edited here.
   its vendored examples prove it; anything else is `review`.
 - The plugin also carries **`quality-kit/no-use-effect`**, which backs no row:
   the `nextjs` profile runs it at error on every `useEffect` or
-  `useLayoutEffect` call outside a directory named `effects/` (matched below the
-  repo root the plugin is stamped into, whatever directory oxlint runs from),
-  aliased imports and `import * as` namespaces included, and its message
-  names the alternatives (compute during render, move the code to the event
-  handler, fetch in a server component or route). A real subscription to an
-  external system goes in `effects/` as a named hook. `rerender-move-effect-to-event`
+  `useLayoutEffect` call outside a directory named `effects/`, aliased imports
+  and `import * as` namespaces included, and its message names the
+  alternatives (compute during render, move the code to the event handler,
+  fetch in a server component or route). A real subscription to an external
+  system goes in `effects/` as a named hook. The exemption is anchored at the
+  repo root, where `stamp.sh` writes the plugin: only an `effects/` segment
+  below that root counts, so a checkout that itself sits under a directory
+  named `effects` is still checked, and the result does not depend on the
+  directory oxlint runs from. `rerender-move-effect-to-event`
   stays `review`: the rule catches that row's incorrect example, but a `custom`
   row's rule must be named after the row. `ts/no-use-effect.test.sh` proves the
   rule and its `effects/` exemption.
