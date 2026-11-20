@@ -420,7 +420,9 @@ never edited here.
   its vendored examples prove it; anything else is `review`.
 - The plugin also carries **`quality-kit/no-use-effect`**, which backs no row:
   the `nextjs` profile runs it at error on every `useEffect` or
-  `useLayoutEffect` call outside a directory named `effects/`, and its message
+  `useLayoutEffect` call outside a directory named `effects/` (matched below the
+  repo root the plugin is stamped into, whatever directory oxlint runs from),
+  aliased imports and `import * as` namespaces included, and its message
   names the alternatives (compute during render, move the code to the event
   handler, fetch in a server component or route). A real subscription to an
   external system goes in `effects/` as a named hook. `rerender-move-effect-to-event`
