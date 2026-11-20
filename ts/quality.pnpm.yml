@@ -14,6 +14,11 @@ name: Quality
 
 on:
   pull_request: {}
+  # A merge queue builds its own commit and waits for the required checks on
+  # it; without this trigger `quality` never reports there and every queued
+  # merge stalls. Inert in a repo with no queue.
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
