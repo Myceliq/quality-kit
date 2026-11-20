@@ -6,8 +6,18 @@
 //       vendored incorrect and correct examples by ts/react-rules.test.sh.
 //       oxlint prints a plugin rule as `quality-kit(<id>)`, so every message
 //       ends with the `quality-kit/<id>` name the config and coverage.json use.
+//       no-use-effect is the one rule not named after a Vercel rule: it bans a
+//       primitive rather than deciding one rule's examples, and its own test is
+//       ts/no-use-effect.test.sh.
+
+import path from "node:path";
 
 const PLUGIN = "quality-kit";
+// A directory segment named `effects`, matched on the path relative to the lint
+// root, so a checkout that itself sits under a directory called `effects` is
+// still checked.
+const EFFECTS_DIR = /(?:^|\/)effects\//u;
+const EFFECT_HOOKS = new Set(["useEffect", "useLayoutEffect"]);
 const SCROLL_BLOCKING_EVENTS = new Set([
   "mousewheel",
   "touchmove",
@@ -164,6 +174,25 @@ const rules = {
               node,
               "js-flatmap-filter",
               ".map(...).filter(Boolean) builds an intermediate array and iterates twice; use .flatMap() and return [] for the dropped items"
+            );
+          }
+        },
+      };
+    },
+  },
+  "no-use-effect": {
+    create(context) {
+      if (EFFECTS_DIR.test(path.relative(context.cwd, context.filename))) {
+        return {};
+      }
+      return {
+        CallExpression(node) {
+          if (EFFECT_HOOKS.has(reactCallee(context, node))) {
+            report(
+              context,
+              node,
+              "no-use-effect",
+              "useEffect is off-limits outside an effects/ directory: it is usually derived state (compute it during render), an event handler (move the code there) or data fetching (use a server component or route). A real subscription to an external system goes in effects/ as a named hook with its own test."
             );
           }
         },
