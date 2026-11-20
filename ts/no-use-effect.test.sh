@@ -68,7 +68,9 @@ else
   bad "$L" "rc=$rc ${out//$'\n'/ }"
 fi
 L="no-use-effect flags an aliased import, a non-React namespace and { default as D }"
-n="$(grep -cF "[src/app/a.tsx:" <<<"$out" || true)"
+# One location line per diagnostic names the file. Matched on the bare path: under
+# GitHub Actions oxlint colours it, NO_COLOR or not, so `[` and `:` are not beside it.
+n="$(grep -cF "src/app/a.tsx" <<<"$out" || true)"
 [ "$n" = 3 ] && ok "$L" || bad "$L" "want 3 diagnostics in src/app/a.tsx, got $n: ${out//$'\n'/ }"
 
 # The exemption is anchored to the plugin's own directory, the repo root, not to
