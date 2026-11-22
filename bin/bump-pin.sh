@@ -169,8 +169,11 @@ else
   # stamp.sh: a ledgered TS rule lints at warn, so warning-exempt scopes drop
   # out), dropping any that recount measures at 0 (the ratchet's "complete").
   # Existing entries are never touched: absorbing new violations of a ledgered
-  # rule is exactly what the ratchet forbids. Can't count → leave the ledger
-  # alone and say so; the consumer's own hook stays the gate.
+  # rule is exactly what the ratchet forbids. Can't count (a failed install, or
+  # baseline-rules.sh exiting non-zero) → leave the ledger alone; then, if the
+  # re-stamped oxlint.config.ts sets a quality-kit/* rule at "error" that neither
+  # burnDown nor permanent ledgers, stop (exit 1) naming them: the consumer's own
+  # hook would refuse the commit on their hits anyway. Otherwise say so and bump.
   # $KIT, not $KITSRC: --errors is this checkout's flag; an older tag lacks it.
   # ponytail: TS profiles only. Python's ledger is rendered into ruff.toml,
   # which the manifest hashes, so seeding it here would need stamp.sh's render
@@ -198,29 +201,51 @@ PY
     # installed the deps itself and failed on the unseeded errors. Install with
     # the consumer's own manager first (stamp.sh already refused anything else),
     # --ignore-scripts as the box's pre-commit hook does: no lifecycle scripts
-    # from the consumer's tree run here. A failed install falls through to
-    # baseline-rules.sh's exit 3 below; no lockfile → no install, same.
+    # from the consumer's tree run here. A failed install (its stderr passed
+    # through) is the seed step's failure; no lockfile → no install, and
+    # baseline-rules.sh's exit 3 is.
+    SEED_FAIL=""
     if [ ! -d "$CONSUMER_DIR/node_modules" ]; then
       INSTALLED=1
       case "$(bash "$KIT/bin/detect-manager.sh" "$CONSUMER_DIR")" in
-        npm)  (cd "$CONSUMER_DIR" && npm ci --ignore-scripts --no-audit --no-fund) >&2 || true ;;
-        pnpm) (cd "$CONSUMER_DIR" && pnpm install --frozen-lockfile --ignore-scripts) >&2 || true ;;
+        npm)  (cd "$CONSUMER_DIR" && npm ci --ignore-scripts --no-audit --no-fund) >&2 || SEED_FAIL="npm ci exit $?" ;;
+        pnpm) (cd "$CONSUMER_DIR" && pnpm install --frozen-lockfile --ignore-scripts) >&2 || SEED_FAIL="pnpm install exit $?" ;;
       esac
     fi
-    BR_RC=0
-    ERRS="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR" --errors)" || BR_RC=$?
-    if [ "$BR_RC" = 0 ]; then
-      cp "$CONSUMER_DIR/.quality-kit.json" "$WORK/quality-kit.json.pre-seed"
-      NEW="$(seed_burn "$ERRS")"
-      if [ "$NEW" != "{}" ]; then
-        RECOUNT="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR")" || BR_RC=$?
-        # back to the pre-seed ledger: the discovery counts are what the recount replaces
-        cp "$WORK/quality-kit.json.pre-seed" "$CONSUMER_DIR/.quality-kit.json"
-        if [ "$BR_RC" = 0 ]; then seed_burn "$NEW" "$RECOUNT" >/dev/null; fi
+    if [ -z "$SEED_FAIL" ]; then
+      BR_RC=0
+      ERRS="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR" --errors)" || BR_RC=$?
+      if [ "$BR_RC" = 0 ]; then
+        cp "$CONSUMER_DIR/.quality-kit.json" "$WORK/quality-kit.json.pre-seed"
+        NEW="$(seed_burn "$ERRS")"
+        if [ "$NEW" != "{}" ]; then
+          RECOUNT="$(bash "$KIT/bin/baseline-rules.sh" "$CONSUMER_DIR")" || BR_RC=$?
+          # back to the pre-seed ledger: the discovery counts are what the recount replaces
+          cp "$WORK/quality-kit.json.pre-seed" "$CONSUMER_DIR/.quality-kit.json"
+          if [ "$BR_RC" = 0 ]; then seed_burn "$NEW" "$RECOUNT" >/dev/null; fi
+        fi
       fi
+      [ "$BR_RC" = 0 ] || SEED_FAIL="baseline-rules.sh exit $BR_RC"
     fi
-    [ "$BR_RC" = 0 ] \
-      || echo "bump-pin: not seeding burn-down (baseline-rules.sh exit $BR_RC) — the consumer's own commit hook stays the gate" >&2
+    if [ -n "$SEED_FAIL" ]; then
+      # The stamped config's quality-kit/* rules at "error" that the ledger lacks
+      # (warn and non-kit entries never count; no config → none).
+      UNLEDGERED="$(python3 - "$CONSUMER_DIR/oxlint.config.ts" "$CONSUMER_DIR/.quality-kit.json" <<'PY'
+import json, os, re, sys
+cfg, path = sys.argv[1:]
+rules = set(re.findall(r'"(quality-kit/[^"]+)"\s*:\s*"error"', open(cfg).read())) if os.path.isfile(cfg) else set()
+if rules:
+    over = json.load(open(path)).get("ruleOverrides", {})
+    rules -= set(over.get("burnDown", {})) | set(over.get("permanent", {}))
+print(" ".join(sorted(rules)))
+PY
+)"
+      if [ -n "$UNLEDGERED" ]; then
+        echo "bump-pin: cannot seed burn-down ($SEED_FAIL) and the ledger lacks the kit's error-severity rules $UNLEDGERED — not bumping: their hits would fail the consumer's commit hook" >&2
+        exit 1
+      fi
+      echo "bump-pin: not seeding burn-down ($SEED_FAIL) — the ledger already covers the kit's error-severity rules" >&2
+    fi
   fi
 fi
 

@@ -158,20 +158,31 @@ EOF
 chmod +x "$STUBBIN/gh"
 
 # npm: `ci` logs itself and, given a lockfile, "installs" the oxlint stand-in
-# from $NPM_CI_OXLINT (refusing without one, as real npm ci does); every other
-# subcommand is the real npm, so lint scripts still run through it.
+# from $NPM_CI_OXLINT (refusing without one, on stderr, as real npm ci does);
+# every other subcommand is the real npm, so lint scripts still run through it.
 REAL_NPM="$(command -v npm)"
 cat > "$STUBBIN/npm" <<EOF
 #!/usr/bin/env bash
 if [ "\$1" = ci ]; then
   echo "npm \$*" >> "\$STUB_LOG"
-  [ -f package-lock.json ] && [ -n "\${NPM_CI_OXLINT:-}" ] || exit 1
+  [ -f package-lock.json ] && [ -n "\${NPM_CI_OXLINT:-}" ] \
+    || { echo "npm ERR! simulated install failure" >&2; exit 1; }
   mkdir -p node_modules/.bin && cp "\$NPM_CI_OXLINT" node_modules/.bin/oxlint
   exit 0
 fi
 exec "$REAL_NPM" "\$@"
 EOF
 chmod +x "$STUBBIN/npm"
+# pnpm: the seed step's install always fails, on stderr, exit 2.
+cat > "$STUBBIN/pnpm" <<'EOF'
+#!/usr/bin/env bash
+echo "pnpm $*" >> "$STUB_LOG"
+if [ "$*" = "install --frozen-lockfile --ignore-scripts" ]; then
+  echo "ERR_PNPM simulated install failure" >&2; exit 2
+fi
+echo "pnpm: unhandled $*" >&2; exit 1
+EOF
+chmod +x "$STUBBIN/pnpm"
 
 # CASE_OUT / CASE_RC / CASE_LOG / CASE_CONSUMER_BARE are set by run_case.
 CASE_OUT="" CASE_RC=0 CASE_LOG="" CASE_CONSUMER_BARE=""
@@ -352,6 +363,10 @@ mkdir -p "$QK_NOLINT_SRC"
 printf '%s\n' "$QK_JSON" > "$QK_NOLINT_SRC/.quality-kit.json"
 printf '{"name":"consumer","private":true,"scripts":{"lint":"oxlint --type-aware"}}\n' > "$QK_NOLINT_SRC/package.json"
 cp -r "$QK_NOLINT_SRC" "$QK_SRC"
+# Kit rules at "error" the ledger lacks: a seed that runs decides the ledger
+# itself, so these (one recounted at 0) must never stop the bump.
+printf '%s\n' 'const local = {' '  "quality-kit/async-parallel": "error",' \
+  '  "quality-kit/js-flatmap-filter": "error",' '};' > "$QK_SRC/oxlint.config.ts"
 mkdir -p "$QK_SRC/node_modules/.bin"
 cat > "$QK_SRC/node_modules/.bin/oxlint" <<'OXLINT'
 #!/usr/bin/env python3
@@ -431,7 +446,7 @@ burn="$(pushed_burn)"
 [ "$burn" = '{"no-console": 3}' ] \
   && ok "nothing to seed leaves the ledger unchanged" || bad "nothing to seed leaves the ledger unchanged" "burnDown=$burn"
 
-# --- linter not installed in the clone: report, then bump anyway -------------
+# --- linter not installed, no stamped oxlint.config.ts: report, then bump ----
 run_qk_case "$HOOKS_EMPTY" "$QK_NOLINT_SRC" "eslint(no-console) no-console 2 warning 2 warning"
 [ "$CASE_RC" = 0 ] && pr_draft_opened \
   && ok "uncountable findings still open the draft PR" || bad "uncountable findings still open the draft PR" "rc=$CASE_RC out=$CASE_OUT"
@@ -440,6 +455,91 @@ grep -qF "bump-pin: not seeding burn-down (baseline-rules.sh exit 3)" <<<"$CASE_
 burn="$(pushed_burn)"
 [ "$burn" = '{"no-console": 3}' ] \
   && ok "uncountable findings leave the ledger unchanged" || bad "uncountable findings leave the ledger unchanged" "burnDown=$burn"
+
+# --- the seed step can't run and the ledger lacks kit error rules: stop -------
+# The bump commit would only be refused by the consumer's hook, so open nothing.
+TWO_RULE_CFG='const local = {
+  "quality-kit/async-parallel": "error",
+  "quality-kit/no-use-effect": "error",
+  "unicorn/no-useless-undefined": ["error", { checkArguments: false }],
+};'
+# new_qk_src <name> [<file>=<content>...]: a committed consumer like
+# $QK_NOLINT_SRC (no node_modules, no lockfile) plus the given files.
+new_qk_src() {
+  local d="$WORKROOT/consumer-qk-$1-src" f; shift
+  mkdir -p "$d"
+  cp "$QK_NOLINT_SRC/.quality-kit.json" "$QK_NOLINT_SRC/package.json" "$d/"
+  for f in "$@"; do printf '%s\n' "${f#*=}" > "$d/${f%%=*}"; done
+  (cd "$d" && "$REAL_GIT" init -q -b main && "$REAL_GIT" config core.hooksPath /dev/null \
+    && "$REAL_GIT" add -A && "$REAL_GIT" -c user.name=t -c user.email=t@t commit -q -m init)
+  echo "$d"
+}
+# assert_stopped <name> <text>...: exit 1, a last output line that starts
+# `bump-pin: ` and contains each <text>, no PR and no pushed branch.
+assert_stopped() {
+  local t="$1" last s; shift
+  last="$(tail -n1 <<<"$CASE_OUT")"
+  [ "$CASE_RC" = 1 ] && ok "$t exits 1" || bad "$t exits 1" "rc=$CASE_RC out=$CASE_OUT"
+  [[ "$last" == "bump-pin: "* ]] && ok "$t: last line is bump-pin's" || bad "$t: last line is bump-pin's" "$last"
+  for s in "$@"; do
+    grep -qF -- "$s" <<<"$last" && ok "$t: last line names $s" || bad "$t: last line names $s" "$last"
+  done
+  grep -q "^gh pr create" "$CASE_LOG" && bad "$t opens no PR" "log: $(cat "$CASE_LOG")" || ok "$t opens no PR"
+  "$REAL_GIT" -C "$CASE_CONSUMER_BARE" show-ref --verify --quiet refs/heads/quality-kit/bump-9.9.9 \
+    && bad "$t pushes no branch" "branch landed" || ok "$t pushes no branch"
+}
+
+run_qk_case "$HOOKS_EMPTY" "$(new_qk_src cfg "oxlint.config.ts=$TWO_RULE_CFG")" \
+  "eslint(no-console) no-console 2 warning 2 warning"
+assert_stopped "uncountable with unledgered kit error rules" \
+  "cannot seed burn-down (baseline-rules.sh exit 3)" quality-kit/async-parallel quality-kit/no-use-effect
+grep -qF "unicorn/no-useless-undefined" <<<"$(tail -n1 <<<"$CASE_OUT")" \
+  && bad "a non-kit error rule is never named" "$CASE_OUT" || ok "a non-kit error rule is never named"
+
+run_qk_case "$HOOKS_EMPTY" \
+  "$(new_qk_src npmfail "oxlint.config.ts=$TWO_RULE_CFG" 'package-lock.json={"lockfileVersion":3}')" \
+  "eslint(no-console) no-console 2 warning 2 warning"
+assert_stopped "failed npm ci with unledgered kit error rules" \
+  "cannot seed burn-down (npm ci exit 1)" quality-kit/async-parallel quality-kit/no-use-effect
+grep -qx "npm ci --ignore-scripts --no-audit --no-fund" "$CASE_LOG" \
+  && ok "the failed seed step ran npm ci" || bad "the failed seed step ran npm ci" "log: $(cat "$CASE_LOG")"
+grep -qx "npm ERR! simulated install failure" <<<"$CASE_OUT" \
+  && ok "a failed npm ci keeps its stderr" || bad "a failed npm ci keeps its stderr" "$CASE_OUT"
+
+run_qk_case "$HOOKS_EMPTY" \
+  "$(new_qk_src pnpmfail "oxlint.config.ts=$TWO_RULE_CFG" "pnpm-lock.yaml=lockfileVersion: '9.0'")" \
+  "eslint(no-console) no-console 2 warning 2 warning"
+assert_stopped "failed pnpm install with unledgered kit error rules" \
+  "cannot seed burn-down (pnpm install exit 2)" quality-kit/async-parallel
+grep -qx "ERR_PNPM simulated install failure" <<<"$CASE_OUT" \
+  && ok "a failed pnpm install keeps its stderr" || bad "a failed pnpm install keeps its stderr" "$CASE_OUT"
+
+# --- can't run, but burnDown/permanent already ledger every kit error rule ----
+run_qk_case "$HOOKS_EMPTY" "$(new_qk_src ledgered \
+  '.quality-kit.json={"version":"9.9.8","profile":"nextjs","runner":"npm","pendingFlags":[],"ruleOverrides":{"burnDown":{"no-console":3,"quality-kit/async-parallel":5},"permanent":{"quality-kit/no-use-effect":{"level":"off","why":"legacy"}}},"ignoreOverrides":[]}' \
+  'oxlint.config.ts=const local = {
+  "quality-kit/async-parallel": "error",
+  "quality-kit/no-use-effect": "error",
+  "unicorn/no-useless-undefined": ["error", { checkArguments: false }],
+  "quality-kit/js-flatmap-filter": "warn",
+};')" "eslint(no-console) no-console 2 warning 2 warning"
+[ "$CASE_RC" = 0 ] && pr_draft_opened \
+  && ok "uncountable but fully ledgered still opens the draft PR" \
+  || bad "uncountable but fully ledgered still opens the draft PR" "rc=$CASE_RC out=$CASE_OUT"
+burn="$(pushed_burn)"
+[ "$burn" = '{"no-console": 3, "quality-kit/async-parallel": 5}' ] \
+  && ok "uncountable but fully ledgered leaves the ledger unchanged" \
+  || bad "uncountable but fully ledgered leaves the ledger unchanged" "burnDown=$burn"
+
+# --- the install fails, but the kit has no error rules: report, then bump -----
+run_qk_case "$HOOKS_EMPTY" "$(new_qk_src npmfail-nocfg 'package-lock.json={"lockfileVersion":3}')" \
+  "eslint(no-console) no-console 2 warning 2 warning"
+[ "$CASE_RC" = 0 ] && pr_draft_opened \
+  && ok "a failed install with no kit error rules still opens the draft PR" \
+  || bad "a failed install with no kit error rules still opens the draft PR" "rc=$CASE_RC out=$CASE_OUT"
+grep -qF "bump-pin: not seeding burn-down" <<<"$CASE_OUT" \
+  && ok "a failed install with no kit error rules says it is not seeding" \
+  || bad "a failed install with no kit error rules says it is not seeding" "$CASE_OUT"
 
 # --- a fresh clone has no node_modules: install, THEN seed --------------------
 # The real failure (booking-platform, after #99): `gh repo clone` brings no
