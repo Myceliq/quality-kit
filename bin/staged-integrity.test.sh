@@ -106,6 +106,9 @@ script_blocks "a burned-down ledger (seeded marker) may not be refilled at the s
 printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-kit.json"
 git -C "$R" add .quality-kit.json
 script_blocks "stripping the seeded marker is refused" "$R" "burnDownSeeded was removed"
+printf '{"version":"0.7.6","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "a kit bump does not lift the seeded marker" "$R" "burnDownSeeded was removed"
 
 # --- 1. conflict markers and whitespace --------------------------------------
 R="$(new_repo)"; printf 'clean\nfile\n' > "$R/$SP"; git -C "$R" add -- "$SP"

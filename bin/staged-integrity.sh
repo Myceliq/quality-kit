@@ -96,6 +96,10 @@ def ver(d):
         return tuple(int(x) for x in str(d.get("version")).split("."))
     except ValueError:
         return None
+seeded = lambda d: (d.get("ruleOverrides") or {}).get("burnDownSeeded") is True
+if seeded(old) and not seeded(new):
+    print("quality-kit: ruleOverrides.burnDownSeeded was removed. It records that the burn-down ledger was seeded; a kit bump does not lift this.", file=sys.stderr)
+    raise SystemExit(1)
 a, b = ver(old), ver(new)
 if a is not None and b is not None and b > a:
     raise SystemExit(0)
@@ -103,10 +107,6 @@ if a is not None and b is not None and b > a:
 # ledger is fillable at the same kit version (the stamper seeds on the first
 # re-stamp after npm ci); once marked, an emptied ledger is a finished burn-down
 # and refilling it is a raise. Stripping the marker is the same bypass in two steps.
-seeded = lambda d: (d.get("ruleOverrides") or {}).get("burnDownSeeded") is True
-if seeded(old) and not seeded(new):
-    print("quality-kit: ruleOverrides.burnDownSeeded was removed. It records that the burn-down ledger was seeded; only a kit-version increase may change it.", file=sys.stderr)
-    raise SystemExit(1)
 if not old_burn and not seeded(old):
     raise SystemExit(0)
 for rule, value in sorted(new_burn.items()):
