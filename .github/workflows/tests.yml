@@ -42,6 +42,13 @@ jobs:
           echo "OXLINT_BIN=$PWD/node_modules/.bin/oxlint" >> "$GITHUB_ENV"
           echo "OXFMT_BIN=$PWD/node_modules/.bin/oxfmt" >> "$GITHUB_ENV"
           echo "VITEST_BIN=$PWD/node_modules/.bin/vitest" >> "$GITHUB_ENV"
+      # The ruff py/ruff-rules.test.sh pins (its PIN), in a venv of its own so no other
+      # suite finds a ruff on PATH it did not ask for; that suite refuses any other version.
+      - name: Install the pinned ruff for the Python rule fixtures
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ruff"
+          "$RUNNER_TEMP/ruff/bin/pip" install --quiet ruff==0.15.2
+          echo "RUFF_BIN=$RUNNER_TEMP/ruff/bin/ruff" >> "$GITHUB_ENV"
       - name: Run all kit test suites
         run: |
           set -euo pipefail
