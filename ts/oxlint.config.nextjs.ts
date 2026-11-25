@@ -77,13 +77,13 @@ const local = {
 } satisfies DummyRuleMap;
 // ultracite 7.9.4's react preset still enables the removed react/react-compiler,
 // and oxlint refuses a whole config that names an unknown rule, so the preset is
-// extended without it; its successors are in `local` above.
+// extended without it; its successors are in `local` above. A repo's ledger can
+// name it too (seeded under oxlint 1.74), so the overrides below drop it as well.
+const removed = "react/react-compiler";
 const reactPreset = {
   ...react,
   rules: Object.fromEntries(
-    Object.entries(react.rules ?? {}).filter(
-      ([rule]) => rule !== "react/react-compiler"
-    )
+    Object.entries(react.rules ?? {}).filter(([rule]) => rule !== removed)
   ),
 };
 // The severity overrides below re-declare a rule, and a re-declaration REPLACES
@@ -112,13 +112,14 @@ const at = (level: string, rule: string) => {
 // burn-down stays at `warn`: switching it off would hide the very violations
 // the drift ratchet has to count.
 const burnDown = Object.fromEntries(
-  Object.keys(qk.ruleOverrides?.burnDown ?? {}).map((r) => [r, at("warn", r)])
+  Object.keys(qk.ruleOverrides?.burnDown ?? {})
+    .filter((r) => r !== removed)
+    .map((r) => [r, at("warn", r)])
 );
 const permanent = Object.fromEntries(
-  Object.entries(qk.ruleOverrides?.permanent ?? {}).map(([r, v]) => [
-    r,
-    at(v.level, r),
-  ])
+  Object.entries(qk.ruleOverrides?.permanent ?? {})
+    .filter(([r]) => r !== removed)
+    .map(([r, v]) => [r, at(v.level, r)])
 );
 
 export default defineConfig({

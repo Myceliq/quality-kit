@@ -355,6 +355,30 @@ PY
     grep -qF "react/purity replaces" <<<"$(compiler_check "$A")" \
       && ok "arm: a successor not at error is caught" \
       || bad "arm: a successor not at error is caught" "compiler_check did not report react/purity"
+
+    # A ledger seeded under oxlint 1.74 can name react/react-compiler in burnDown
+    # or permanent; the config must still load and leave the rule out. The arm
+    # runs the same ledger against a copy whose ledger filters are deleted, and
+    # must fail to load, so a pass here is the filters' doing.
+    # ledger_load CONFIG DIR — prints the config's resolved rules for the ledger.
+    ledger_load() {
+      mkdir "$2"
+      ln -s "$NM" "$2/node_modules"
+      cp "$1" "$2/oxlint.config.ts"
+      cp "$KITROOT/ts/oxlint-react-rules.mjs" "$2/"
+      printf '%s\n' '{"ruleOverrides":{"burnDown":{"react/react-compiler":3},"permanent":{"react/react-compiler":{"level":"off","why":"x"}}}}' >"$2/.quality-kit.json"
+      (cd "$2" && "$OXLINT" --print-config 2>&1)
+    }
+    LEDGER="a ledgered react/react-compiler is left out and the config loads"
+    rc=0; got="$(ledger_load "$KITROOT/ts/oxlint.config.nextjs.ts" "$TMP/ledger")" || rc=$?
+    if [ "$rc" = 0 ] && ! grep -qF '"react/react-compiler"' <<<"$got"; then ok "$LEDGER"
+    else bad "$LEDGER" "rc=$rc: $(head -c 400 <<<"$got")"; fi
+    sed -e 's/^ *\.filter((r) => r !== removed)$//' -e 's/^ *\.filter((\[r\]) => r !== removed)$//' \
+      "$KITROOT/ts/oxlint.config.nextjs.ts" >"$TMP/unfiltered.ts"
+    rc=0; ledger_load "$TMP/unfiltered.ts" "$TMP/ledger-arm" >/dev/null || rc=$?
+    if [ "$rc" != 0 ] && ! cmp -s "$TMP/unfiltered.ts" "$KITROOT/ts/oxlint.config.nextjs.ts"; then
+      ok "arm: without the ledger filters the config fails to load"
+    else bad "arm: without the ledger filters the config fails to load" "rc=$rc"; fi
   fi
 
   # fixtures LIST — lints each example file in LIST (examples.py's output) on its
