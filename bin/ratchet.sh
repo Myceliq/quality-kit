@@ -103,7 +103,9 @@ for rule, allowed in sorted(burn.items()):
         print(f"DRIFT: burn-down regressed: {rule} {got} > recorded {allowed} — fix the new violations, or bump the count in .quality-kit.json in this PR with justification", file=sys.stderr)
         hits = sorted(by_rule[rule])
         for path, line, col in hits[:20]:
-            print(f'  {path}:{line}:{col} {rule}', file=sys.stderr)
+            # A filename is untrusted text: a newline in one could forge a report line.
+            shown = ''.join(c if c.isprintable() else repr(c)[1:-1] for c in path)
+            print(f'  {shown}:{line}:{col} {rule}', file=sys.stderr)
         if len(hits) > 20:
             print(f'  … and {len(hits) - 20} more', file=sys.stderr)
         if not hits:
