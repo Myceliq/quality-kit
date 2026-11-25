@@ -309,6 +309,76 @@ PY
         && ok "arm: a custom row naming a rule not at error is caught" \
         || bad "arm: a custom row naming a rule not at error is caught" "oxcheck did not report $off"
     fi
+
+    # oxlint 1.79 split react/react-compiler into per-category rules and removed
+    # it (oxc #25500). ultracite 7.9.4's react preset still enables it, so the
+    # config drops it and enables each successor itself. The list is every
+    # `declare_react_compiler_lint!` rule in oxc's crates/oxc_linter/src/rules/react
+    # at tag oxlint_v1.95.0 — written out here, not read from the config, so a
+    # successor dropped from the config is a failure rather than a smaller list.
+    COMPILER="react/capitalized-calls react/error-boundaries react/exhaustive-effect-dependencies
+      react/globals react/hooks react/immutability react/incompatible-library react/invariant
+      react/memo-dependencies react/no-deriving-state-in-effects react/preserve-manual-memoization
+      react/purity react/refs react/rule-suppression react/set-state-in-effect
+      react/set-state-in-render react/static-components react/syntax react/todo
+      react/unsupported-syntax react/use-memo react/void-use-memo"
+    # compiler_check DIR — one line per problem in DIR's resolved.json and error.txt.
+    compiler_check() {
+      # shellcheck disable=SC2086 # COMPILER is a word list on purpose.
+      python3 - "$1/resolved.json" "$1/error.txt" $COMPILER <<'PY'
+import json, sys
+rules = json.load(open(sys.argv[1]))["rules"]
+errors = set(open(sys.argv[2]).read().split())
+if "react/react-compiler" in rules:
+    print("react/react-compiler is in the resolved nextjs config; oxlint 1.95 removed it")
+for r in sys.argv[3:]:
+    if r not in errors:
+        print(f"{r} replaces react/react-compiler but is not at error in the resolved nextjs config")
+PY
+    }
+    label="react/react-compiler is replaced by its successors, each at error"
+    hits="$(compiler_check "$W")"
+    if [ -z "$hits" ]; then ok "$label"; else
+      while IFS= read -r h; do bad "$label" "$h"; done <<<"$hits"
+    fi
+    A="$TMP/compiler-present"; mkdir "$A"; cp "$W/error.txt" "$A/"
+    python3 - "$W/resolved.json" "$A/resolved.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["rules"]["react/react-compiler"] = "deny"
+json.dump(c, open(sys.argv[2], "w"))
+PY
+    grep -qF "react/react-compiler is in" <<<"$(compiler_check "$A")" \
+      && ok "arm: react/react-compiler in the resolved config is caught" \
+      || bad "arm: react/react-compiler in the resolved config is caught" "compiler_check did not report it"
+    A="$TMP/compiler-missing"; mkdir "$A"; cp "$W/resolved.json" "$A/"
+    grep -vxF react/purity "$W/error.txt" >"$A/error.txt" || true
+    grep -qF "react/purity replaces" <<<"$(compiler_check "$A")" \
+      && ok "arm: a successor not at error is caught" \
+      || bad "arm: a successor not at error is caught" "compiler_check did not report react/purity"
+
+    # A ledger seeded under oxlint 1.74 can name react/react-compiler in burnDown
+    # or permanent; the config must still load and leave the rule out. The arm
+    # runs the same ledger against a copy whose ledger filters are deleted, and
+    # must fail to load, so a pass here is the filters' doing.
+    # ledger_load CONFIG DIR — prints the config's resolved rules for the ledger.
+    ledger_load() {
+      mkdir "$2"
+      ln -s "$NM" "$2/node_modules"
+      cp "$1" "$2/oxlint.config.ts"
+      cp "$KITROOT/ts/oxlint-react-rules.mjs" "$2/"
+      printf '%s\n' '{"ruleOverrides":{"burnDown":{"react/react-compiler":3},"permanent":{"react/react-compiler":{"level":"off","why":"x"}}}}' >"$2/.quality-kit.json"
+      (cd "$2" && "$OXLINT" --print-config 2>&1)
+    }
+    LEDGER="a ledgered react/react-compiler is left out and the config loads"
+    rc=0; got="$(ledger_load "$KITROOT/ts/oxlint.config.nextjs.ts" "$TMP/ledger")" || rc=$?
+    if [ "$rc" = 0 ] && ! grep -qF '"react/react-compiler"' <<<"$got"; then ok "$LEDGER"
+    else bad "$LEDGER" "rc=$rc: $(head -c 400 <<<"$got")"; fi
+    sed -e 's/^ *\.filter((r) => r !== removed)$//' -e 's/^ *\.filter((\[r\]) => r !== removed)$//' \
+      "$KITROOT/ts/oxlint.config.nextjs.ts" >"$TMP/unfiltered.ts"
+    rc=0; ledger_load "$TMP/unfiltered.ts" "$TMP/ledger-arm" >/dev/null || rc=$?
+    if [ "$rc" != 0 ] && ! cmp -s "$TMP/unfiltered.ts" "$KITROOT/ts/oxlint.config.nextjs.ts"; then
+      ok "arm: without the ledger filters the config fails to load"
+    else bad "arm: without the ledger filters the config fails to load" "rc=$rc"; fi
   fi
 
   # fixtures LIST — lints each example file in LIST (examples.py's output) on its

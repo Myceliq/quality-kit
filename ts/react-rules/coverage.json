@@ -289,9 +289,9 @@
   },
   "rerender-derived-state-no-effect": {
     "by": "oxlint",
-    "rule": "react/react-compiler",
+    "rule": "react/no-deriving-state-in-effects",
     "static_export": "applies",
-    "why": "react/react-compiler reports state derived from props or state and set inside an effect (EffectDerivationsOfState, EffectSetState; verified on this rule's incorrect example with oxlint 1.74.0)."
+    "why": "react/no-deriving-state-in-effects reports state derived from props or state and set inside an effect, and react/set-state-in-effect reports the synchronous setState there too (verified on this rule's incorrect example with oxlint 1.95.0)."
   },
   "rerender-functional-setstate": {
     "by": "review",
@@ -397,9 +397,9 @@
   },
   "server-no-shared-module-state": {
     "by": "oxlint",
-    "rule": "react/react-compiler",
+    "rule": "react/globals",
     "static_export": "n/a",
-    "why": "n/a: a static export serves no concurrent requests for module state to leak between. react/react-compiler reports a module-level variable reassigned during render (verified on this rule's incorrect example with oxlint 1.74.0)."
+    "why": "n/a: a static export serves no concurrent requests for module state to leak between. react/globals reports a module-level variable reassigned during render (verified on this rule's incorrect example with oxlint 1.95.0)."
   },
   "server-parallel-fetching": {
     "by": "review",
