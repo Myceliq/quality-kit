@@ -70,14 +70,18 @@ const binding = (context, name) => {
   }
 };
 
-const isReactNamespace = (b) => b?.from === "react" && b.imported === "*";
+// Whether `name` is bound at the top level to a namespace or default import of "react".
+const isReactImport = (context, name) => {
+  const b = binding(context, name);
+  return b?.from === "react" && b.imported === "*";
+};
 
 // The React export a call to `f(...)` or `ns.f(...)` invokes; "" for any other callee.
 // An unqualified name counts as React's unless the file binds it to an import from
 // another module or declares it locally (the vendored examples import nothing), and
 // a name imported from "react" under an alias resolves to the export it aliases. A
-// qualified call counts when its object is `React` or a namespace or default import
-// of "react".
+// qualified call counts when its object is an unbound global `React` or a namespace
+// or default import of "react" (#120: `const React = { useState }` is not React).
 const reactCallee = (context, call) => {
   const { callee } = call;
   if (callee.type === "Identifier") {
@@ -90,12 +94,11 @@ const reactCallee = (context, call) => {
   if (
     callee.type === "MemberExpression" &&
     !callee.computed &&
-    callee.object.type === "Identifier"
+    callee.object.type === "Identifier" &&
+    ((callee.object.name === "React" && !binding(context, "React")) ||
+      isReactImport(context, callee.object.name))
   ) {
-    const { name } = callee.object;
-    if (name === "React" || isReactNamespace(binding(context, name))) {
-      return callee.property.name;
-    }
+    return callee.property.name;
   }
   return "";
 };

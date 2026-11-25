@@ -85,13 +85,27 @@ fi
 # COUNTED, not flagged. `fail=1` made the summary say "1 failed" whether one suite failed or nine
 # — and that line is the one a reader scans to size the damage before opening the log.
 failed=0
+passed_cases=0
+failed_cases=0
 for suite in "${suites[@]}"; do
   rel="${suite#./}"
   echo "=== $rel ==="
-  bash "$suite" || failed=$((failed + 1))
+  suite_out="$(mktemp)"
+  if bash "$suite" >"$suite_out" 2>&1; then
+    :
+  else
+    failed=$((failed + 1))
+  fi
+  cat "$suite_out"
+  case_count="$(grep -c '^PASS ' "$suite_out" || true)"
+  passed_cases=$((passed_cases + case_count))
+  case_count="$(grep -c '^FAIL ' "$suite_out" || true)"
+  failed_cases=$((failed_cases + case_count))
+  rm -f "$suite_out"
 done
 
 echo "selftest: ${#suites[@]} suite(s) ran, $failed failed"
+echo "selftest: $passed_cases case(s) passed, $failed_cases failed in ${#suites[@]} suite(s)"
 # The exit status is a boolean, so the count is clamped rather than returned: `exit 256` wraps to
 # 0 and would report a catastrophic run as success.
 [ "$failed" -eq 0 ] || exit 1
