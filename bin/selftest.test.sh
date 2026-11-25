@@ -47,6 +47,23 @@ else
   bad "single passing suite" "rc=$rc out=$out"
 fi
 
+# --- case total decreases by one when a PASS case is removed ---
+root="$tmpbase/cases"
+mkroot "$root"
+printf '%s\\n' 'echo "PASS first"; echo "PASS second"' > "$root/cases.test.sh"
+rc=0; out="$(cd "$root" && bash bin/selftest.sh 2>&1)" || rc=$?
+first="$(grep '^selftest: [0-9][0-9]* case(s) passed' <<<"$out" || true)"
+printf '%s\\n' 'echo "PASS first"' > "$root/cases.test.sh"
+rc2=0; out2="$(cd "$root" && bash bin/selftest.sh 2>&1)" || rc2=$?
+second="$(grep '^selftest: [0-9][0-9]* case(s) passed' <<<"$out2" || true)"
+if [ "$rc" -eq 0 ] && [ "$rc2" -eq 0 ] \
+   && [ "$first" = 'selftest: 2 case(s) passed, 0 failed in 1 suite(s)' ] \
+   && [ "$second" = 'selftest: 1 case(s) passed, 0 failed in 1 suite(s)' ]; then
+  ok "case total counts PASS lines"
+else
+  bad "case total counts PASS lines" "first=$first second=$second"
+fi
+
 # --- failing suite makes runner fail closed ---
 root="$tmpbase/fail"
 mkroot "$root"
