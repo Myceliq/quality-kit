@@ -309,6 +309,52 @@ PY
         && ok "arm: a custom row naming a rule not at error is caught" \
         || bad "arm: a custom row naming a rule not at error is caught" "oxcheck did not report $off"
     fi
+
+    # oxlint 1.79 split react/react-compiler into per-category rules and removed
+    # it (oxc #25500). ultracite 7.9.4's react preset still enables it, so the
+    # config drops it and enables each successor itself. The list is every
+    # `declare_react_compiler_lint!` rule in oxc's crates/oxc_linter/src/rules/react
+    # at tag oxlint_v1.95.0 — written out here, not read from the config, so a
+    # successor dropped from the config is a failure rather than a smaller list.
+    COMPILER="react/capitalized-calls react/error-boundaries react/exhaustive-effect-dependencies
+      react/globals react/hooks react/immutability react/incompatible-library react/invariant
+      react/memo-dependencies react/no-deriving-state-in-effects react/preserve-manual-memoization
+      react/purity react/refs react/rule-suppression react/set-state-in-effect
+      react/set-state-in-render react/static-components react/syntax react/todo
+      react/unsupported-syntax react/use-memo react/void-use-memo"
+    # compiler_check DIR — one line per problem in DIR's resolved.json and error.txt.
+    compiler_check() {
+      # shellcheck disable=SC2086 # COMPILER is a word list on purpose.
+      python3 - "$1/resolved.json" "$1/error.txt" $COMPILER <<'PY'
+import json, sys
+rules = json.load(open(sys.argv[1]))["rules"]
+errors = set(open(sys.argv[2]).read().split())
+if "react/react-compiler" in rules:
+    print("react/react-compiler is in the resolved nextjs config; oxlint 1.95 removed it")
+for r in sys.argv[3:]:
+    if r not in errors:
+        print(f"{r} replaces react/react-compiler but is not at error in the resolved nextjs config")
+PY
+    }
+    label="react/react-compiler is replaced by its successors, each at error"
+    hits="$(compiler_check "$W")"
+    if [ -z "$hits" ]; then ok "$label"; else
+      while IFS= read -r h; do bad "$label" "$h"; done <<<"$hits"
+    fi
+    A="$TMP/compiler-present"; mkdir "$A"; cp "$W/error.txt" "$A/"
+    python3 - "$W/resolved.json" "$A/resolved.json" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["rules"]["react/react-compiler"] = "deny"
+json.dump(c, open(sys.argv[2], "w"))
+PY
+    grep -qF "react/react-compiler is in" <<<"$(compiler_check "$A")" \
+      && ok "arm: react/react-compiler in the resolved config is caught" \
+      || bad "arm: react/react-compiler in the resolved config is caught" "compiler_check did not report it"
+    A="$TMP/compiler-missing"; mkdir "$A"; cp "$W/resolved.json" "$A/"
+    grep -vxF react/purity "$W/error.txt" >"$A/error.txt" || true
+    grep -qF "react/purity replaces" <<<"$(compiler_check "$A")" \
+      && ok "arm: a successor not at error is caught" \
+      || bad "arm: a successor not at error is caught" "compiler_check did not report react/purity"
   fi
 
   # fixtures LIST — lints each example file in LIST (examples.py's output) on its
