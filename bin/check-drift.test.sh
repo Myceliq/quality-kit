@@ -1514,7 +1514,10 @@ stub_oxlint() { # stub_oxlint <repo> <eslint rules, one per diagnostic | crash>
 #!/usr/bin/env bash
 emit='$2'
 [ "\$emit" = crash ] && { echo crash; exit 1; }
-python3 -c "import json,sys;print(json.dumps({'diagnostics':[{'code':'eslint(%s)' % r} for r in sys.argv[1:]]}))" \$emit
+python3 -c "import json,sys
+print(json.dumps({'diagnostics':[{'code':'eslint(%s)' % r,
+ 'filename':'smoke.test.ts' if i == 1 else 'work file.ts',
+ 'labels':[{'span':{'line':i,'column':4}}]} for i,r in enumerate(sys.argv[1:],1)]}))" \$emit
 EOF
   chmod +x "$1/node_modules/.bin/oxlint"
 }
@@ -1524,10 +1527,29 @@ qk_mut "$W" "d['ruleOverrides']['burnDown']={'func-style':2}"
 rc=0; out="$(ratchet "$W")" || rc=$?
 [ "$rc" = 0 ] && ! echo "$out" | grep -q "working tree is dirty" \
   && ok "a clean tree gives the ratchet no dirty-tree warning" || bad "a clean tree gives the ratchet no dirty-tree warning" "rc=$rc $out"
-touch "$W/scratch.txt"
+touch "$W/work file.ts"
 rc=0; out="$(ratchet "$W")" || rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -q "working tree is dirty" \
   && ok "the ratchet surfaces the dirty-tree warning without failing on it" || bad "the ratchet surfaces the dirty-tree warning without failing on it" "rc=$rc $out"
+
+# A scratch file makes this a dirty tree, not an unreliable count. An at-ceiling
+# rule must not get a repair hint, even if some of its findings are in that file.
+chk "ratchet does not blame a dirty tree for its counts" no_line 'counts may not match'
+chk "at-ceiling rule prints no locations" no_line ':4 func-style'
+
+qk_mut "$W" "d['ruleOverrides']['burnDown']={'func-style':1}"
+rc=0; out="$(QK_RATCHET_BASE=HEAD ratchet "$W")" || rc=$?
+[ "$rc" = 1 ] && grep -A1 'DRIFT: burn-down regressed: func-style 2 > recorded 1' <<<"$out" | grep -qxF '  work file.ts:2:4 func-style' \
+  && ! grep -q 'smoke.test.ts:1:4' <<<"$out" \
+  && ok "regression names the changed file directly below its DRIFT line" || bad "regression names the changed file directly below its DRIFT line" "$out"
+
+stub_oxlint "$W" "$(printf 'func-style %.0s' {1..24})"
+rc=0; out="$(QK_RATCHET_BASE=HEAD ratchet "$W")" || rc=$?
+[ "$rc" = 1 ] && [ "$(grep -cE '^  work file\.ts:[0-9]+:4 func-style$' <<<"$out")" = 20 ] && grep -qxF '  … and 3 more' <<<"$out" \
+  && ok "cap counts only matching locations in changed files" || bad "cap counts only matching locations in changed files" "$out"
+rc=0; out="$(QK_RATCHET_BASE=missing-ref ratchet "$W")" || rc=$?
+[ "$rc" = 1 ] && grep -qi 'all files' <<<"$out" && grep -qxF '  smoke.test.ts:1:4 func-style' <<<"$out" && grep -qxF '  … and 4 more' <<<"$out" \
+  && ok "missing base reports capped locations from all files" || bad "missing base reports capped locations from all files" "$out"
 
 W="$(fresh)"; stub_oxlint "$W" crash
 qk_mut "$W" "d['ruleOverrides']['burnDown']={'func-style':2}"
@@ -1617,6 +1639,7 @@ if command -v uvx >/dev/null 2>&1; then
   bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
   out="$(ratchet "$Q" || true)"
   echo "$out" | grep -q "DRIFT.*F401" && ok "grown count caught (python)" || bad "grown count caught (python)" "$out"
+  grep -qxF '  a.py:2:8 F401' <<<"$out" && ok "ruff locations are repo-relative" || bad "ruff locations are repo-relative" "$out"
 
   qk_mut "$Q" "d['ruleOverrides']['burnDown']={'F401':3}"
   bash "$DIR/render-ruff.sh" "$Q" > "$Q/ruff.toml"
