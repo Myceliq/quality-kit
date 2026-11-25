@@ -63,21 +63,53 @@ import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
 # stderr is NOT discarded: only stdout is captured, so baseline-rules.sh's
 # dirty-tree warning and the linter's own failure text land in the drift
 # report beside the DRIFT line they explain, without touching ACTUAL.
+LOCATIONS="$(mktemp)"
+trap 'rm -f "$LOCATIONS"' EXIT
 BR_RC=0
-ACTUAL="$(bash "$BR" "$REPO" --select "$SEL")" || BR_RC=$?
+ACTUAL="$(bash "$BR" "$REPO" --select "$SEL" --locations "$LOCATIONS")" || BR_RC=$?
 if [ "$BR_RC" != 0 ]; then
   echo "DRIFT: ratchet: the linter failed to run (baseline-rules.sh exit $BR_RC) — fix the linter/config and re-run; a crashed lint run must not be read as 'all burn-down complete'" >&2
   exit 1
 fi
-python3 - "$BURN" "$ACTUAL" <<'PY'
-import json, sys
+python3 - "$BURN" "$ACTUAL" "$REPO" "$LOCATIONS" "${QK_RATCHET_BASE:-origin/HEAD}" <<'PY'
+import collections, json, os, subprocess, sys
 burn, actual = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+repo, locations, ref = sys.argv[3:]
+
+def git(*args):
+    return subprocess.check_output(['git', *args], cwd=repo, stderr=subprocess.DEVNULL)
+
+by_rule = collections.defaultdict(list)
+if any(actual.get(rule, 0) > allowed for rule, allowed in burn.items()):
+    try:
+        base = git('merge-base', 'HEAD', ref).strip()
+        paths = git('diff', '--relative', '--name-only', '-z', base, '--', '.')
+        paths += git('ls-files', '--others', '--exclude-standard', '-z', '--', '.')
+        changed = set(os.fsdecode(paths).split('\0'))
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        changed = None
+        print(f'ratchet: no changed-file list for merge-base with {ref}; showing locations from all files', file=sys.stderr)
+    with open(locations) as f:
+        for rule, filename, line, col in json.load(f):
+            path = os.path.relpath(os.path.join(repo, filename), repo)
+            if changed is None or path in changed:
+                by_rule[rule].append((path, line, col))
+
 rc = 0
 for rule, allowed in sorted(burn.items()):
     got = actual.get(rule, 0)
     if got > allowed:
         rc = 1
         print(f"DRIFT: burn-down regressed: {rule} {got} > recorded {allowed} — fix the new violations; a burn-down count never goes up", file=sys.stderr)
+        hits = sorted(by_rule[rule])
+        for path, line, col in hits[:20]:
+            # A filename is untrusted text: a newline in one could forge a report line.
+            shown = ''.join(c if c.isprintable() else repr(c)[1:-1] for c in path)
+            print(f'  {shown}:{line}:{col} {rule}', file=sys.stderr)
+        if len(hits) > 20:
+            print(f'  … and {len(hits) - 20} more', file=sys.stderr)
+        if not hits:
+            print(f'  (none of its violations are in a file changed since the merge-base with {ref})', file=sys.stderr)
     elif got == 0:
         rc = 1
         print(f"DRIFT: burn-down complete for {rule} — remove the entry from .quality-kit.json ruleOverrides.burnDown", file=sys.stderr)
