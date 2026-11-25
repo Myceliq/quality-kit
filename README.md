@@ -278,9 +278,10 @@ recorded for the old project hooks under `[hooks.state]` is now unused.
   severity. `check-drift.sh --ratchet` re-counts every CI run: counts may only
   shrink, and an entry that reaches zero must be removed. A burn-down count may
   only go down: the pre-commit hook refuses a raised or new count, unless the
-  kit version increases or the ledger has never been seeded. `stamp.sh` records a
-  recounted, non-empty seed as `ruleOverrides.burnDownSeeded: true`; after that, an
-  emptied ledger cannot be refilled at the same version and the marker cannot be removed.
+  kit version increases or the ledger has never been seeded. `stamp.sh` sets
+  `ruleOverrides.burnDownSeeded: true` on any non-empty ledger (a legacy ledger counts as
+  seeded with or without it, and emptying one must leave the marker behind); after that,
+  an emptied ledger cannot be refilled at the same version and the marker cannot be removed.
 - `ruleOverrides.permanent` — `rule → {level, why}`, never generated. `level` is
   `off` or `warn` (python: `off` only). A non-empty `why` is enforced.
 - `ruleOverrides.drift` — optional, never generated: `drift rule id → {level, why}`

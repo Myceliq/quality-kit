@@ -36,7 +36,7 @@ the burn-down no-raise rule below, which the local pre-commit hook enforces):
     every run: the count may only shrink, and when it reaches zero the entry
     must be removed. A burn-down count may only go down: the pre-commit hook
     (`staged-integrity.sh`) refuses a raised or new count, and a kit-version
-    increase (or the stamper seeding an empty ledger) is the only exception.
+    increase (or a ledger that was never seeded (no `burnDownSeeded` marker and no prior counts)) is the only exception.
   - `permanent` (`rule → {level, why}`) — a rule that genuinely never fits this
     repo. `level` is `off` or `warn` (python: `off` only — ruff has no warn
     severity). `why` is required and must say what makes the rule wrong here,

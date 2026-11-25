@@ -478,10 +478,6 @@ if len(sys.argv) > 3:
     burn = kept
 d = json.load(open(path))
 d["ruleOverrides"]["burnDown"] = burn
-# Only a recounted, non-empty seed marks the ledger: staged-integrity.sh then
-# treats a later refill of an emptied ledger as a raise, not a first seed.
-if len(sys.argv) > 3 and burn:
-    d["ruleOverrides"]["burnDownSeeded"] = True
 open(path, "w").write(json.dumps(d, indent=2) + "\n")
 if len(sys.argv) > 3:
     print(f"→ seeded ruleOverrides.burnDown with {len(burn)} rules from a lint run" if burn
@@ -530,6 +526,19 @@ import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
     echo "→ toolchain not ready (baseline-rules.sh exit $BR_RC) — after install, seed the burn-down: quality-kit/bin/stamp.sh $REPO --profile $PROFILE"
   fi
 fi
+
+# Mark every non-empty ledger as seeded, fresh or legacy, so the marker converges:
+# staged-integrity.sh then treats a later refill of an emptied ledger as a raise,
+# not a first seed. An empty ledger is never marked (the next re-stamp may seed it).
+python3 - "$REPO/.quality-kit.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+ov = d.get("ruleOverrides")
+if isinstance(ov, dict) and ov.get("burnDown") and ov.get("burnDownSeeded") is not True:
+    ov["burnDownSeeded"] = True
+    open(path, "w").write(json.dumps(d, indent=2) + "\n")
+PY
 
 # ruff.toml is a rendered file: kit base + this repo's declared overrides.
 # ORDERING: this must be the LAST thing that touches .quality-kit.json's

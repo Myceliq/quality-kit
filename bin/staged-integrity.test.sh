@@ -110,6 +110,17 @@ printf '{"version":"0.7.6","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-ki
 git -C "$R" add .quality-kit.json
 script_blocks "a kit bump does not lift the seeded marker" "$R" "burnDownSeeded was removed"
 
+R="$(new_repo)"; printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":3}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "emptying an unmarked legacy ledger without the marker is refused" "$R" "emptied without ruleOverrides.burnDownSeeded"
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m emptied
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":40},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "a legacy ledger emptied (with the marker) cannot be refilled at the same version" "$R" "burnDown[curly] rose 0 → 40"
+
 # --- 1. conflict markers and whitespace --------------------------------------
 R="$(new_repo)"; printf 'clean\nfile\n' > "$R/$SP"; git -C "$R" add -- "$SP"
 script_passes "clean payload passes" "$R"

@@ -100,6 +100,12 @@ seeded = lambda d: (d.get("ruleOverrides") or {}).get("burnDownSeeded") is True
 if seeded(old) and not seeded(new):
     print("quality-kit: ruleOverrides.burnDownSeeded was removed. It records that the burn-down ledger was seeded; a kit bump does not lift this.", file=sys.stderr)
     raise SystemExit(1)
+# A ledger that still holds counts is seeded even without the marker (kits before
+# burnDownSeeded left none), so emptying it must leave the marker behind: the next
+# commit then sees an emptied-but-seeded ledger and refuses a same-version refill.
+if (old_burn or seeded(old)) and not new_burn and not seeded(new):
+    print("quality-kit: the burn-down ledger was emptied without ruleOverrides.burnDownSeeded: true. Add the marker in this commit so the ledger cannot be re-seeded later.", file=sys.stderr)
+    raise SystemExit(1)
 a, b = ver(old), ver(new)
 if a is not None and b is not None and b > a:
     raise SystemExit(0)
