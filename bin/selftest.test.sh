@@ -67,12 +67,13 @@ fi
 # --- failing suite makes runner fail closed ---
 root="$tmpbase/fail"
 mkroot "$root"
-printf '%s\n' 'echo fail-ok; exit 1' > "$root/fail.test.sh"
+printf '%s\n' 'echo "FAIL fail-ok"; exit 1' > "$root/fail.test.sh"
 chmod +x "$root/fail.test.sh"
 rc=0; out="$(cd "$root" && bash bin/selftest.sh 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ] \
    && grep -q '^=== fail.test.sh ===$' <<<"$out" \
-   && grep -q 'selftest: 1 suite(s) ran, 1 failed' <<<"$out"; then
+   && grep -q 'selftest: 1 suite(s) ran, 1 failed' <<<"$out" \
+   && grep -q 'selftest: 0 case(s) passed, 1 failed in 1 suite(s)' <<<"$out"; then
   ok "failing suite fails closed"
 else
   bad "failing suite fails closed" "rc=$rc out=$out"
@@ -84,13 +85,14 @@ fi
 root="$tmpbase/multifail"
 mkroot "$root"
 for n in 1 2 3; do
-  printf '%s\n' "echo bad-$n; exit 1" > "$root/bad$n.test.sh"
+  printf '%s\n' "echo 'FAIL bad-$n'; exit 1" > "$root/bad$n.test.sh"
   chmod +x "$root/bad$n.test.sh"
 done
 printf '%s\n' 'echo good; exit 0' > "$root/good.test.sh"
 chmod +x "$root/good.test.sh"
 rc=0; out="$(cd "$root" && bash bin/selftest.sh 2>&1)" || rc=$?
-if [ "$rc" -eq 1 ] && grep -q 'selftest: 4 suite(s) ran, 3 failed' <<<"$out"; then
+if [ "$rc" -eq 1 ] && grep -q 'selftest: 4 suite(s) ran, 3 failed' <<<"$out" \
+   && grep -q 'selftest: 0 case(s) passed, 3 failed in 4 suite(s)' <<<"$out"; then
   ok "the summary counts every failure, and the exit stays 1"
 else
   bad "the summary counts every failure" "rc=$rc out=$out"
