@@ -73,7 +73,7 @@ assert qk=={'version':kit_version,'profile':'nextjs','runner':'npm','pendingFlag
 p=json.load(open('$R/package.json'))
 assert p['scripts']['dev']=='next dev', 'existing scripts preserved'
 assert 'validate' in p['scripts'] and 'validate:fast' in p['scripts']
-assert p['devDependencies']['oxlint']=='1.74.0' and p['devDependencies']['typescript']=='7.0.2'
+assert p['devDependencies']['oxlint']=='1.95.0' and p['devDependencies']['typescript']=='7.0.2'
 # the stamper writes the Node floor its own drift gate enforces — a fresh stamp
 # must never be red on the kit's own new gate
 assert p['engines']['node']==json.load(open('$DIR/../ts/engines.json'))['node'], p.get('engines')

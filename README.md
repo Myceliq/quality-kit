@@ -338,7 +338,12 @@ re-stamp byte-exact.
   whether a rule id exists. A typo'd or removed-in-upgrade rule in `burnDown` /
   `permanent` is a hard oxlint config-parse error (`Rule '...' not found`,
   exit 1) at lint time — not a silent no-op. (Verified for oxlint/TS profiles;
-  a typo'd ruff code may behave differently — not verified.)
+  a typo'd ruff code may behave differently — not verified.) One named
+  exception: `react/react-compiler`, which oxlint removed in 1.79. The nextjs
+  and vite configs drop it from both ledgers so a ledger seeded before 1.95
+  still loads. A `burnDown` entry for it is still reported by the ratchet
+  ("burn-down complete … remove the entry"). A `permanent` entry for it is
+  dropped silently, so remove it by hand when you re-vendor.
 
 ## Drift rules — test parallelism and secrets in argv
 
