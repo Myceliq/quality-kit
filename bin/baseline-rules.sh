@@ -32,14 +32,17 @@ fi
 # bump-pin.sh needs that to find rules the ledger lacks that block its bump
 # commit, without seeding rules that only warn. TS only — ruff has no severity,
 # every finding it reports already fails the gate.
-SELECT="" REPO="" ERRORS=0
+# --locations FILE also writes [rule, filename, line, column] records as JSON
+# for the ratchet, from the same diagnostics as the counts on stdout.
+SELECT="" REPO="" ERRORS=0 LOCATIONS=""
 while [ $# -gt 0 ]; do case "$1" in
   --select) SELECT="${2:?--select needs a comma-separated rule list}"; shift 2 ;;
   --errors) ERRORS=1; shift ;;
-  -*)       echo "unknown flag $1 (usage: baseline-rules.sh <repo> [--select a,b] [--errors])" >&2; exit 64 ;;
+  --locations) LOCATIONS="${2:?--locations needs an output file}"; shift 2 ;;
+  -*)       echo "unknown flag $1 (usage: baseline-rules.sh <repo> [--select a,b] [--errors] [--locations file])" >&2; exit 64 ;;
   *)        REPO="$1"; shift ;;
 esac; done
-[ -n "$REPO" ] || { echo "usage: baseline-rules.sh <repo> [--select a,b] [--errors]" >&2; exit 64; }
+[ -n "$REPO" ] || { echo "usage: baseline-rules.sh <repo> [--select a,b] [--errors] [--locations file]" >&2; exit 64; }
 REPO="$(cd "$REPO" && pwd)"
 [ -f "$REPO/.quality-kit.json" ] || { echo "baseline-rules.sh: $REPO/.quality-kit.json not found — stamp the repo first (quality-kit/bin/stamp.sh $REPO --profile <profile>)" >&2; exit 64; }
 PROFILE="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('profile',''))" "$REPO/.quality-kit.json")"
@@ -62,7 +65,11 @@ PROFILE="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('p
 #      tree cleanliness at seed time.
 if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 \
    && [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
-  echo "baseline-rules.sh: WARNING — working tree is dirty; counts may not match a clean CI checkout. Seed from a clean tree for an authoritative baseline." >&2
+  if [ -n "$SELECT" ]; then
+    echo "baseline-rules.sh: working tree is dirty; counts include working-tree changes." >&2
+  else
+    echo "baseline-rules.sh: WARNING — working tree is dirty; counts may not match a clean CI checkout. Seed from a clean tree for an authoritative baseline." >&2
+  fi
 fi
 
 if [ "$PROFILE" = python ]; then
@@ -114,7 +121,11 @@ if diags is None:
     print(err[-2000:] if err else raw[-2000:], file=sys.stderr)
     sys.exit(4)
 c = collections.Counter(x['code'] for x in diags if x.get('code'))
-print(json.dumps(dict(sorted(c.items()))))" "$RUFF_RC" "$ERRF" "$REPO" <<<"$RAW"
+if sys.argv[4]:
+    with open(sys.argv[4], 'w') as f:
+        json.dump([(x['code'], x['filename'], x['location']['row'], x['location']['column'])
+                   for x in diags if x.get('code') and x.get('filename') and x.get('location')], f)
+print(json.dumps(dict(sorted(c.items()))))" "$RUFF_RC" "$ERRF" "$REPO" "$LOCATIONS" <<<"$RAW"
   exit 0
 fi
 
@@ -162,6 +173,18 @@ def norm(code):
         p, r = code[:-1].split('(', 1)
         return r if p == 'eslint' else f'{p}/{r}'
     return code
-c = collections.Counter(norm(d['code']) for d in diags
-                        if d.get('code') and (not errors_only or d.get('severity') == 'error'))
-print(json.dumps(dict(sorted(c.items()))))" "$REPO" "$ERRORS" <<<"$RAW"
+c = collections.Counter()
+locations = []
+for d in diags:
+    if not d.get('code') or (errors_only and d.get('severity') != 'error'):
+        continue
+    rule = norm(d['code'])
+    c[rule] += 1
+    if sys.argv[3] and d.get('filename') and d.get('labels'):
+        span = d['labels'][0].get('span', {})
+        if 'line' in span and 'column' in span:
+            locations.append((rule, d['filename'], span['line'], span['column']))
+if sys.argv[3]:
+    with open(sys.argv[3], 'w') as f:
+        json.dump(locations, f)
+print(json.dumps(dict(sorted(c.items()))))" "$REPO" "$ERRORS" "$LOCATIONS" <<<"$RAW"

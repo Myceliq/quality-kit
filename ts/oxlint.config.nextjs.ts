@@ -45,11 +45,47 @@ const local = {
   "quality-kit/no-use-effect": "error",
   "quality-kit/react19-no-forwardref": "error",
   "quality-kit/rerender-lazy-state-init": "error",
+  // oxlint 1.79 split react/react-compiler into these per-category rules and
+  // removed it (oxc #25500); the list is every `declare_react_compiler_lint!`
+  // rule in oxc's crates/oxc_linter/src/rules/react at tag oxlint_v1.95.0.
+  "react/capitalized-calls": "error",
+  "react/error-boundaries": "error",
+  "react/exhaustive-effect-dependencies": "error",
+  "react/globals": "error",
+  "react/hooks": "error",
+  "react/immutability": "error",
+  "react/incompatible-library": "error",
+  "react/invariant": "error",
+  "react/memo-dependencies": "error",
+  "react/no-deriving-state-in-effects": "error",
+  "react/preserve-manual-memoization": "error",
+  "react/purity": "error",
+  "react/refs": "error",
+  "react/rule-suppression": "error",
+  "react/set-state-in-effect": "error",
+  "react/set-state-in-render": "error",
+  "react/static-components": "error",
+  "react/syntax": "error",
+  "react/todo": "error",
+  "react/unsupported-syntax": "error",
+  "react/use-memo": "error",
+  "react/void-use-memo": "error",
   // Keep the rule for `return undefined` / `x = undefined`, but stop it
   // stripping type-REQUIRED argument undefineds — e.g. Vitest 4's
   // `mockResolvedValue(undefined)`, where removing the arg is a type error.
   "unicorn/no-useless-undefined": ["error", { checkArguments: false }],
 } satisfies DummyRuleMap;
+// ultracite 7.9.4's react preset still enables the removed react/react-compiler,
+// and oxlint refuses a whole config that names an unknown rule, so the preset is
+// extended without it; its successors are in `local` above. A repo's ledger can
+// name it too (seeded under oxlint 1.74), so the overrides below drop it as well.
+const removed = "react/react-compiler";
+const reactPreset = {
+  ...react,
+  rules: Object.fromEntries(
+    Object.entries(react.rules ?? {}).filter(([rule]) => rule !== removed)
+  ),
+};
 // The severity overrides below re-declare a rule, and a re-declaration REPLACES
 // the fleet's entry rather than merging into it. Written as a bare level it
 // therefore also discarded the rule's OPTIONS, reverting it to its plugin
@@ -61,7 +97,7 @@ const local = {
 // configured entry and swap only element 0, so the options survive.
 const configured: Record<string, unknown> = {
   ...core.rules,
-  ...react.rules,
+  ...reactPreset.rules,
   ...next.rules,
   ...local,
 };
@@ -76,17 +112,18 @@ const at = (level: string, rule: string) => {
 // burn-down stays at `warn`: switching it off would hide the very violations
 // the drift ratchet has to count.
 const burnDown = Object.fromEntries(
-  Object.keys(qk.ruleOverrides?.burnDown ?? {}).map((r) => [r, at("warn", r)])
+  Object.keys(qk.ruleOverrides?.burnDown ?? {})
+    .filter((r) => r !== removed)
+    .map((r) => [r, at("warn", r)])
 );
 const permanent = Object.fromEntries(
-  Object.entries(qk.ruleOverrides?.permanent ?? {}).map(([r, v]) => [
-    r,
-    at(v.level, r),
-  ])
+  Object.entries(qk.ruleOverrides?.permanent ?? {})
+    .filter(([r]) => r !== removed)
+    .map(([r, v]) => [r, at(v.level, r)])
 );
 
 export default defineConfig({
-  extends: [core, react, next],
+  extends: [core, reactPreset, next],
   // extends does not merge ignorePatterns automatically (verified against
   // oxlint 1.74.0) — merge explicitly so a future preset's own patterns
   // aren't silently dropped.
