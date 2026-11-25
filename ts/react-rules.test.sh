@@ -424,7 +424,7 @@ PY
   printf 'const React = { useState }\nconst [n, setN] = React.useState(makeInitial())\n' >"$FX/foreign.tsx"
   printf 'import * as R from "react"\nconst [n, setN] = R.useState(makeInitial())\n' >"$FX/alias.tsx"
   printf 'const [n, setN] = React.useState(makeInitial())\n' >"$FX/global.tsx"
-  # react_member_cases PLUGIN — lints the two fixtures through PLUGIN with only
+  # react_member_cases PLUGIN — lints the three fixtures through PLUGIN with only
   # rerender-lazy-state-init on, printing ok|label or bad|label|why per case.
   react_member_cases() {
     local plugin="$1" label want file rc out
@@ -454,16 +454,17 @@ CASES
   while IFS='|' read -r st label detail; do
     if [ "$st" = ok ]; then ok "$label"; else bad "$label" "$detail"; fi
   done < <(react_member_cases oxlint-react-rules.mjs)
-  # Each fixture must fail with the binding check removed (the old `React` name
-  # test only), so they prove the check and not just the rule.
+  # The foreign and alias fixtures must fail with the binding check removed (the
+  # old `React` name test only), so they prove the check and not just the rule;
+  # the global fixture is flagged either way.
   sed 's/isReactImport(context, callee.object.name)/callee.object.name === "React"/' \
     "$W/oxlint-react-rules.mjs" >"$W/oxlint-react-rules-unchecked.mjs"
   unchecked_bad="$(react_member_cases oxlint-react-rules-unchecked.mjs | grep -c '^bad|' || true)"
   if [ "$unchecked_bad" = 2 ]; then
-    ok "arm: each React.member fixture fails with the binding check removed"
+    ok "arm: the foreign and alias React.member fixtures fail with the binding check removed"
   else
-    bad "arm: each React.member fixture fails with the binding check removed" \
-      "want both fixtures to flip, got $unchecked_bad"
+    bad "arm: the foreign and alias React.member fixtures fail with the binding check removed" \
+      "want the foreign and alias fixtures to flip, got $unchecked_bad"
   fi
 
   # Agent detection must not change the fixture result or its summary.
