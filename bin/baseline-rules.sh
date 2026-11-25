@@ -59,8 +59,8 @@ PROFILE="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('p
 #      precondition would make stamp-invoked seeding fail 100% of the time.
 #   2. A bad baseline cannot reach main anyway: the stamp PR's own CI runs
 #      `check-drift.sh --ratchet` post-install against a CLEAN checkout, so a
-#      count seeded too low fails that very PR with "burn-down regressed … fix
-#      or bump with justification". The gate is self-correcting on the PR that
+#      count seeded too low fails that very PR with "burn-down regressed … fix the
+#      new violations; a burn-down count never goes up". The gate is self-correcting on the PR that
 #      introduces the baseline — which is the real reproducibility check, not
 #      tree cleanliness at seed time.
 if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 \

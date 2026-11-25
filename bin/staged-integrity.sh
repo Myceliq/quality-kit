@@ -75,7 +75,8 @@ fail() { FOUND=1; printf '[staged-integrity] %s\n' "$@" >&2; }
 
 # --- burn-down ratchet -------------------------------------------------------
 # Compare the committed ledger with the staged blob; a version change is the
-# sole exception because a kit bump may seed counts for newly added rules.
+# exceptions: a kit-version increase may seed counts for newly added rules, and
+# an empty ledger may be seeded by the stamper.
 if git cat-file -e HEAD:.quality-kit.json 2>/dev/null; then
   if git ls-files --error-unmatch .quality-kit.json >/dev/null 2>&1; then
     head_json="$(git show HEAD:.quality-kit.json)"
@@ -90,12 +91,22 @@ old_burn = (old.get("ruleOverrides") or {}).get("burnDown", {})
 new_burn = (new.get("ruleOverrides") or {}).get("burnDown", {})
 old_burn = old_burn if isinstance(old_burn, dict) else {}
 new_burn = new_burn if isinstance(new_burn, dict) else {}
-if old.get("version") != new.get("version"):
+def ver(d):
+    try:
+        return tuple(int(x) for x in str(d.get("version")).split("."))
+    except ValueError:
+        return None
+a, b = ver(old), ver(new)
+if a is not None and b is not None and b > a:
+    raise SystemExit(0)
+# A ledger with no entries yet is the stamper's own seed (stamp.sh seeds on the
+# first re-stamp after npm ci, at the same kit version), so it is not a raise.
+if not old_burn:
     raise SystemExit(0)
 for rule, value in sorted(new_burn.items()):
     previous = old_burn.get(rule, 0)
     if rule not in old_burn or value > previous:
-        print(f"quality-kit: ruleOverrides.burnDown[{rule}] rose {previous} → {value}. A burn-down count only goes down: fix the new violations instead. Only a kit-version bump may add a rule's starting count.", file=sys.stderr)
+        print(f"quality-kit: ruleOverrides.burnDown[{rule}] rose {previous} → {value}. A burn-down count only goes down: fix the new violations instead. Only a kit-version increase may add a rule's starting count.", file=sys.stderr)
         raise SystemExit(1)
 PY
     fi

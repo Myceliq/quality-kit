@@ -87,6 +87,16 @@ printf '{"version":"0.7.6","ruleOverrides":{"burnDown":{"curly":4}}}\n' > "$R/.q
 git -C "$R" add .quality-kit.json
 script_passes "kit version bump may raise burn-down count" "$R"
 
+printf '{"version":"0.7.4","ruleOverrides":{"burnDown":{"curly":9}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "a kit version downgrade may not raise burn-down count" "$R" "quality-kit: ruleOverrides.burnDown[curly] rose"
+
+R="$(new_repo)"; printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":4}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_passes "stamper may seed an empty burn-down ledger at the same version" "$R"
+
 # --- 1. conflict markers and whitespace --------------------------------------
 R="$(new_repo)"; printf 'clean\nfile\n' > "$R/$SP"; git -C "$R" add -- "$SP"
 script_passes "clean payload passes" "$R"
