@@ -74,9 +74,9 @@ FOUND=0
 fail() { FOUND=1; printf '[staged-integrity] %s\n' "$@" >&2; }
 
 # --- burn-down ratchet -------------------------------------------------------
-# Compare the committed ledger with the staged blob; a version change is the
-# exceptions: a kit-version increase may seed counts for newly added rules, and
-# an empty ledger may be seeded by the stamper.
+# Compare the committed ledger with the staged blob. Two exceptions: a kit-version
+# increase may seed counts for newly added rules, and a ledger the stamper has
+# never seeded (no ruleOverrides.burnDownSeeded marker) may be seeded.
 if git cat-file -e HEAD:.quality-kit.json 2>/dev/null; then
   if git ls-files --error-unmatch .quality-kit.json >/dev/null 2>&1; then
     head_json="$(git show HEAD:.quality-kit.json)"
@@ -99,9 +99,15 @@ def ver(d):
 a, b = ver(old), ver(new)
 if a is not None and b is not None and b > a:
     raise SystemExit(0)
-# A ledger with no entries yet is the stamper's own seed (stamp.sh seeds on the
-# first re-stamp after npm ci, at the same kit version), so it is not a raise.
-if not old_burn:
+# stamp.sh marks a ledger it has seeded from a real lint run. Until then an empty
+# ledger is fillable at the same kit version (the stamper seeds on the first
+# re-stamp after npm ci); once marked, an emptied ledger is a finished burn-down
+# and refilling it is a raise. Stripping the marker is the same bypass in two steps.
+seeded = lambda d: (d.get("ruleOverrides") or {}).get("burnDownSeeded") is True
+if seeded(old) and not seeded(new):
+    print("quality-kit: ruleOverrides.burnDownSeeded was removed. It records that the burn-down ledger was seeded; only a kit-version increase may change it.", file=sys.stderr)
+    raise SystemExit(1)
+if not old_burn and not seeded(old):
     raise SystemExit(0)
 for rule, value in sorted(new_burn.items()):
     previous = old_burn.get(rule, 0)

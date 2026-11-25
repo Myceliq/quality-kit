@@ -478,6 +478,10 @@ if len(sys.argv) > 3:
     burn = kept
 d = json.load(open(path))
 d["ruleOverrides"]["burnDown"] = burn
+# Only a recounted, non-empty seed marks the ledger: staged-integrity.sh then
+# treats a later refill of an emptied ledger as a raise, not a first seed.
+if len(sys.argv) > 3 and burn:
+    d["ruleOverrides"]["burnDownSeeded"] = True
 open(path, "w").write(json.dumps(d, indent=2) + "\n")
 if len(sys.argv) > 3:
     print(f"→ seeded ruleOverrides.burnDown with {len(burn)} rules from a lint run" if burn

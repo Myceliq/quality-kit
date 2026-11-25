@@ -14,7 +14,8 @@ Validation contract, identical local and CI (`npm run` / `make` per this repo's
   is skipped silently until then. Pre-commit still runs it. If you cannot paste
   the output, you have not run it.
 
-Rules (CI drift gate enforces these — a PR that violates them cannot merge):
+Rules (CI drift gate enforces these — a PR that violates them cannot merge — except
+the burn-down no-raise rule below, which the local pre-commit hook enforces):
 
 - Never edit stamped files (`.quality/`, `oxlint.config.ts`, `oxfmt.config.ts`,
   `tsconfig.quality.json`, `.github/workflows/quality.yml`;
