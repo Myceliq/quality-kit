@@ -1,8 +1,8 @@
 {
   "typescript": "7.0.2",
-  "oxlint": "1.74.0",
+  "oxlint": "1.95.0",
   "oxfmt": "0.67.0",
-  "oxlint-tsgolint": "0.25.0",
+  "oxlint-tsgolint": "7.0.2008",
   "ultracite": "7.9.4",
   "vitest": "4.1.12"
 }
