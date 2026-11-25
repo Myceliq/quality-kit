@@ -47,7 +47,7 @@ tsc, a SLOC budget — and none of them sees a repository-shape defect. Five che
 | blob size | a newly staged blob over the ceiling. Only new *content* counts: deletions carry no blob, a `chmod` or `git mv` re-lists the same object, and a large file already in `HEAD` and untouched never appears in the staged diff at all |
 | case fold | two tracked paths that differ only in case, which become one file on a macOS or Windows checkout |
 | symlinks | a symlink whose target is not in the commit — staged, or left broken because the commit deletes or renames what it points at, including emptying a directory it points at — and a symlink flattened into a regular file (index mode `120000` → `100644`) |
-| burn-down ledger | a raised or newly added `ruleOverrides.burnDown` count, unless the same change raises the kit version or the ledger was never seeded (no `burnDownSeeded` marker) |
+| burn-down ledger | a raised or newly added `ruleOverrides.burnDown` count, unless the same change raises the kit version or the ledger was never seeded (no `burnDownSeeded` marker and no prior counts) |
 
 It reads the **index** — `git ls-files`, `git diff --cached`, `git cat-file` —
 and never the working tree: the gate certifies what the commit will *contain*,
