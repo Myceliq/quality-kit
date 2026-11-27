@@ -39,8 +39,7 @@ document gaps that are deliberate, where the obvious "fix" reopens a hole.
 `bin/staged-integrity.sh` runs inside the hook's deterministic block, in a
 stamped repo, immediately **before** that repo's `validate:fast` and therefore
 before any model call. The profiles validate *language code* — Pyright, Ruff,
-tsc, a SLOC budget — and none of them sees a repository-shape defect. Four
-checks, all from Git itself, no new dependency:
+tsc, a SLOC budget — and none of them sees a repository-shape defect. Five checks, using Git and Python 3 (for the burn-down ledger comparison):
 
 | check | what it refuses |
 |---|---|
@@ -48,6 +47,7 @@ checks, all from Git itself, no new dependency:
 | blob size | a newly staged blob over the ceiling. Only new *content* counts: deletions carry no blob, a `chmod` or `git mv` re-lists the same object, and a large file already in `HEAD` and untouched never appears in the staged diff at all |
 | case fold | two tracked paths that differ only in case, which become one file on a macOS or Windows checkout |
 | symlinks | a symlink whose target is not in the commit — staged, or left broken because the commit deletes or renames what it points at, including emptying a directory it points at — and a symlink flattened into a regular file (index mode `120000` → `100644`) |
+| burn-down ledger | a raised or newly added `ruleOverrides.burnDown` count, unless the same change raises the kit version or the ledger was never seeded (no `burnDownSeeded` marker and no prior counts) |
 
 It reads the **index** — `git ls-files`, `git diff --cached`, `git cat-file` —
 and never the working tree: the gate certifies what the commit will *contain*,
@@ -276,9 +276,12 @@ recorded for the old project hooks under `[hooks.state]` is now unused.
   first stamp by `bin/baseline-rules.sh`. Applied at `warn` on TS profiles
   (visible, non-blocking); `extend-ignore`d on python, since ruff has no warn
   severity. `check-drift.sh --ratchet` re-counts every CI run: counts may only
-  shrink, and an entry that reaches zero must be removed. A count can be
-  raised — a justified, diff-visible bump in `.quality-kit.json` — if new
-  violations are genuinely unavoidable.
+  shrink, and an entry that reaches zero must be removed. A burn-down count may
+  only go down: the pre-commit hook refuses a raised or new count, unless the
+  kit version increases or the ledger has never been seeded. `stamp.sh` sets
+  `ruleOverrides.burnDownSeeded: true` on any non-empty ledger (a legacy ledger counts as
+  seeded with or without it, and emptying one must leave the marker behind); after that,
+  an emptied ledger cannot be refilled at the same version and the marker cannot be removed.
 - `ruleOverrides.permanent` — `rule → {level, why}`, never generated. `level` is
   `off` or `warn` (python: `off` only). A non-empty `why` is enforced.
 - `ruleOverrides.drift` — optional, never generated: `drift rule id → {level, why}`

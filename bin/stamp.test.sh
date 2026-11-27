@@ -319,6 +319,8 @@ rc=0; out="$(bash "$S" "$T" --profile nextjs 2>&1)" || rc=$?
 [ "$rc" = 0 ] && burn_is "$T" '{"func-style": 4}' \
   && ok "seed records the ratchet's recount, not the discovery pass" \
   || bad "seed records the ratchet's recount, not the discovery pass" "rc=$rc burnDown=$(cat "$T/.quality-kit.json") out=$out"
+grep -q '"burnDownSeeded": true' "$T/.quality-kit.json" \
+  && ok "a non-empty seed carries the burnDownSeeded marker" || bad "a non-empty seed carries the burnDownSeeded marker" "$(cat "$T/.quality-kit.json")"
 echo "$out" | grep "no-console" | grep -q "dropped" \
   && ok "a rule the recount measures at zero is dropped by name" || bad "a rule the recount measures at zero is dropped by name" "$out"
 echo "$out" | grep -qF "seeded ruleOverrides.burnDown with 1 rules" \
@@ -351,6 +353,8 @@ rc=0; out="$(bash "$S" "$T" --profile nextjs 2>&1)" || rc=$?
 [ "$rc" = 0 ] && burn_is "$T" '{}' \
   && ok "a failed recount leaves no first-pass numbers behind" \
   || bad "a failed recount leaves no first-pass numbers behind" "rc=$rc burnDown=$(cat "$T/.quality-kit.json") out=$out"
+! grep -q burnDownSeeded "$T/.quality-kit.json" \
+  && ok "an empty ledger is not marked seeded" || bad "an empty ledger is not marked seeded" "$(cat "$T/.quality-kit.json")"
 echo "$out" | grep -q "baseline-rules.sh" && echo "$out" | grep -q "did not produce a valid" \
   && ok "a failed recount surfaces the linter's own diagnostic" || bad "a failed recount surfaces the linter's own diagnostic" "$out"
 

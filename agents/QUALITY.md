@@ -14,7 +14,8 @@ Validation contract, identical local and CI (`npm run` / `make` per this repo's
   is skipped silently until then. Pre-commit still runs it. If you cannot paste
   the output, you have not run it.
 
-Rules (CI drift gate enforces these — a PR that violates them cannot merge):
+Rules (CI drift gate enforces these — a PR that violates them cannot merge — except
+the burn-down no-raise rule below, which the local pre-commit hook enforces):
 
 - Never edit stamped files (`.quality/`, `oxlint.config.ts`, `oxfmt.config.ts`,
   `tsconfig.quality.json`, `.github/workflows/quality.yml`;
@@ -33,11 +34,9 @@ Rules (CI drift gate enforces these — a PR that violates them cannot merge):
   PR as the code it covers:
   - `burnDown` (`rule → count`) — a temporary, counted allowance. CI re-counts
     every run: the count may only shrink, and when it reaches zero the entry
-    must be removed. If new violations are genuinely unavoidable, the
-    sanctioned path is to raise that rule's count in `.quality-kit.json` in
-    the same PR (a diff-visible, reviewed bump, justified in the PR body) —
-    the same kind of sanctioned staging as `pendingFlags`. Writing a
-    justification without raising the count does not pass the ratchet.
+    must be removed. A burn-down count may only go down: the pre-commit hook
+    (`staged-integrity.sh`) refuses a raised or new count, and a kit-version
+    increase (or a ledger that was never seeded (no `burnDownSeeded` marker and no prior counts)) is the only exception.
   - `permanent` (`rule → {level, why}`) — a rule that genuinely never fits this
     repo. `level` is `off` or `warn` (python: `off` only — ruff has no warn
     severity). `why` is required and must say what makes the rule wrong here,

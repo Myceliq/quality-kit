@@ -72,6 +72,71 @@ script_blocks() { # $1=name $2=repo $3=expected substring, rest env
   else ok "$name"; fi
 }
 
+# --- burn-down ledger regression guard ---------------------------------------
+R="$(new_repo)"; printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":3}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":4}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "raising burn-down count blocks" "$R" "quality-kit: ruleOverrides.burnDown[curly] rose 3 → 4"
+
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":2}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_passes "lowering burn-down count passes" "$R"
+
+printf '{"version":"0.7.6","ruleOverrides":{"burnDown":{"curly":4}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_passes "kit version bump may raise burn-down count" "$R"
+
+printf '{"version":"0.7.4","ruleOverrides":{"burnDown":{"curly":9}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "a kit version downgrade may not raise burn-down count" "$R" "quality-kit: ruleOverrides.burnDown[curly] rose"
+
+R="$(new_repo)"; printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":4}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_passes "stamper may seed an empty burn-down ledger at the same version" "$R"
+
+R="$(new_repo)"; printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":40},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "a burned-down ledger (seeded marker) may not be refilled at the same version" "$R" "quality-kit: ruleOverrides.burnDown[curly] rose 0 → 40"
+
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "stripping the seeded marker is refused" "$R" "burnDownSeeded was removed"
+printf '{"version":"0.7.6","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "a kit bump does not lift the seeded marker" "$R" "burnDownSeeded was removed"
+
+R="$(new_repo)"; printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":3}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{}}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "emptying an unmarked legacy ledger without the marker is refused" "$R" "emptied without ruleOverrides.burnDownSeeded"
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m emptied
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":40},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "a legacy ledger emptied (with the marker) cannot be refilled at the same version" "$R" "burnDown[curly] rose 0 → 40"
+
+# A zero-byte (or whitespace-only) staged ledger is an absent marker, not a skipped check:
+# truncating the file must not shed burnDownSeeded, and a blob already committed empty must
+# not wedge every later commit that stages a valid ledger.
+R="$(new_repo)"; printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
+: > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "truncating a seeded ledger to zero bytes is refused" "$R" "burnDownSeeded was removed"
+printf ' \t\n' > "$R/.quality-kit.json"  # survives command substitution, so the .strip() path runs
+git -C "$R" add .quality-kit.json
+script_blocks "a whitespace-only staged ledger is refused like an empty one" "$R" "burnDownSeeded was removed"
+git -C "$R" commit -q -m "bypassed truncation"  # hooksPath is /dev/null here: stands in for --no-verify
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_passes "a valid ledger can replace one already committed empty" "$R"
+
 # --- 1. conflict markers and whitespace --------------------------------------
 R="$(new_repo)"; printf 'clean\nfile\n' > "$R/$SP"; git -C "$R" add -- "$SP"
 script_passes "clean payload passes" "$R"

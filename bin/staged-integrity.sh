@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # What:  deterministic staged-INDEX integrity preflight — conflict markers and
 #        whitespace, oversized new blobs, case-fold path collisions, broken and
-#        flattened symlinks.
+#        flattened symlinks, and burn-down ledger regressions (Git + Python 3).
 # Where: quality-kit/bin; called by hooks/git-pre-commit immediately before the
 #        stamped repo's own validate:fast, so it lands before any model review.
 # Why:   validate:fast is a LANGUAGE gate — Pyright, Ruff, tsc, a SLOC budget.
@@ -72,6 +72,59 @@ esac
 
 FOUND=0
 fail() { FOUND=1; printf '[staged-integrity] %s\n' "$@" >&2; }
+
+# --- burn-down ratchet -------------------------------------------------------
+# Compare the committed ledger with the staged blob. Two exceptions: a kit-version
+# increase may seed counts for newly added rules, and a ledger the stamper has
+# never seeded (no ruleOverrides.burnDownSeeded marker) may be seeded.
+if git cat-file -e HEAD:.quality-kit.json 2>/dev/null; then
+  if git ls-files --error-unmatch .quality-kit.json >/dev/null 2>&1; then
+    head_json="$(git show HEAD:.quality-kit.json)"
+    staged_json="$(git show :.quality-kit.json 2>/dev/null || true)"
+    # An empty blob is a ledger with no marker and no counts, not a reason to skip: a
+    # truncation must not shed burnDownSeeded, and one already committed must not wedge
+    # every later commit on a parse error.
+    python3 - "$head_json" "$staged_json" <<'PY' || FOUND=1
+import json, sys
+old, new = (json.loads(a.strip() or "{}") for a in sys.argv[1:])
+old = old if isinstance(old, dict) else {}
+new = new if isinstance(new, dict) else {}
+old_burn = (old.get("ruleOverrides") or {}).get("burnDown", {})
+new_burn = (new.get("ruleOverrides") or {}).get("burnDown", {})
+old_burn = old_burn if isinstance(old_burn, dict) else {}
+new_burn = new_burn if isinstance(new_burn, dict) else {}
+def ver(d):
+    try:
+        return tuple(int(x) for x in str(d.get("version")).split("."))
+    except ValueError:
+        return None
+seeded = lambda d: (d.get("ruleOverrides") or {}).get("burnDownSeeded") is True
+if seeded(old) and not seeded(new):
+    print("quality-kit: ruleOverrides.burnDownSeeded was removed. It records that the burn-down ledger was seeded; a kit bump does not lift this.", file=sys.stderr)
+    raise SystemExit(1)
+# A ledger that still holds counts is seeded even without the marker (kits before
+# burnDownSeeded left none), so emptying it must leave the marker behind: the next
+# commit then sees an emptied-but-seeded ledger and refuses a same-version refill.
+if (old_burn or seeded(old)) and not new_burn and not seeded(new):
+    print("quality-kit: the burn-down ledger was emptied without ruleOverrides.burnDownSeeded: true. Add the marker in this commit so the ledger cannot be re-seeded later.", file=sys.stderr)
+    raise SystemExit(1)
+a, b = ver(old), ver(new)
+if a is not None and b is not None and b > a:
+    raise SystemExit(0)
+# stamp.sh marks a ledger it has seeded from a real lint run. Until then an empty
+# ledger is fillable at the same kit version (the stamper seeds on the first
+# re-stamp after npm ci); once marked, an emptied ledger is a finished burn-down
+# and refilling it is a raise. Stripping the marker is the same bypass in two steps.
+if not old_burn and not seeded(old):
+    raise SystemExit(0)
+for rule, value in sorted(new_burn.items()):
+    previous = old_burn.get(rule, 0)
+    if rule not in old_burn or value > previous:
+        print(f"quality-kit: ruleOverrides.burnDown[{rule}] rose {previous} → {value}. A burn-down count only goes down: fix the new violations instead. Only a kit-version increase may add a rule's starting count.", file=sys.stderr)
+        raise SystemExit(1)
+PY
+  fi
+fi
 
 # --- 1. conflict markers and whitespace errors -------------------------------
 # git's own check, so `core.whitespace` and `.gitattributes` remain the way to

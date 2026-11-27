@@ -100,7 +100,7 @@ for rule, allowed in sorted(burn.items()):
     got = actual.get(rule, 0)
     if got > allowed:
         rc = 1
-        print(f"DRIFT: burn-down regressed: {rule} {got} > recorded {allowed} — fix the new violations, or bump the count in .quality-kit.json in this PR with justification", file=sys.stderr)
+        print(f"DRIFT: burn-down regressed: {rule} {got} > recorded {allowed} — fix the new violations; a burn-down count never goes up", file=sys.stderr)
         hits = sorted(by_rule[rule])
         for path, line, col in hits[:20]:
             # A filename is untrusted text: a newline in one could forge a report line.

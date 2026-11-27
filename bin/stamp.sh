@@ -527,6 +527,19 @@ import json,sys; print(','.join(sorted(json.loads(sys.argv[1]))))" "$BURN")"
   fi
 fi
 
+# Mark every non-empty ledger as seeded, fresh or legacy, so the marker converges:
+# staged-integrity.sh then treats a later refill of an emptied ledger as a raise,
+# not a first seed. An empty ledger is never marked (the next re-stamp may seed it).
+python3 - "$REPO/.quality-kit.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+ov = d.get("ruleOverrides")
+if isinstance(ov, dict) and ov.get("burnDown") and ov.get("burnDownSeeded") is not True:
+    ov["burnDownSeeded"] = True
+    open(path, "w").write(json.dumps(d, indent=2) + "\n")
+PY
+
 # ruff.toml is a rendered file: kit base + this repo's declared overrides.
 # ORDERING: this must be the LAST thing that touches .quality-kit.json's
 # override keys before the manifest is hashed — it reads them. Task 6 inserts
