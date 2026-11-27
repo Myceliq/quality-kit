@@ -129,7 +129,7 @@ git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
 : > "$R/.quality-kit.json"
 git -C "$R" add .quality-kit.json
 script_blocks "truncating a seeded ledger to zero bytes is refused" "$R" "burnDownSeeded was removed"
-printf '\n' > "$R/.quality-kit.json"
+printf ' \t\n' > "$R/.quality-kit.json"  # survives command substitution, so the .strip() path runs
 git -C "$R" add .quality-kit.json
 script_blocks "a whitespace-only staged ledger is refused like an empty one" "$R" "burnDownSeeded was removed"
 git -C "$R" commit -q -m "bypassed truncation"  # hooksPath is /dev/null here: stands in for --no-verify
