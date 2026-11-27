@@ -121,6 +121,22 @@ printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{"curly":40},"burnDownSee
 git -C "$R" add .quality-kit.json
 script_blocks "a legacy ledger emptied (with the marker) cannot be refilled at the same version" "$R" "burnDown[curly] rose 0 → 40"
 
+# A zero-byte (or whitespace-only) staged ledger is an absent marker, not a skipped check:
+# truncating the file must not shed burnDownSeeded, and a blob already committed empty must
+# not wedge every later commit that stages a valid ledger.
+R="$(new_repo)"; printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json; git -C "$R" commit -q -m init
+: > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "truncating a seeded ledger to zero bytes is refused" "$R" "burnDownSeeded was removed"
+printf '\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_blocks "a whitespace-only staged ledger is refused like an empty one" "$R" "burnDownSeeded was removed"
+git -C "$R" commit -q -m "bypassed truncation"  # hooksPath is /dev/null here: stands in for --no-verify
+printf '{"version":"0.7.5","ruleOverrides":{"burnDown":{},"burnDownSeeded":true}}\n' > "$R/.quality-kit.json"
+git -C "$R" add .quality-kit.json
+script_passes "a valid ledger can replace one already committed empty" "$R"
+
 # --- 1. conflict markers and whitespace --------------------------------------
 R="$(new_repo)"; printf 'clean\nfile\n' > "$R/$SP"; git -C "$R" add -- "$SP"
 script_passes "clean payload passes" "$R"

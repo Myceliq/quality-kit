@@ -81,10 +81,12 @@ if git cat-file -e HEAD:.quality-kit.json 2>/dev/null; then
   if git ls-files --error-unmatch .quality-kit.json >/dev/null 2>&1; then
     head_json="$(git show HEAD:.quality-kit.json)"
     staged_json="$(git show :.quality-kit.json 2>/dev/null || true)"
-    if [ -n "$staged_json" ]; then
-      python3 - "$head_json" "$staged_json" <<'PY' || FOUND=1
+    # An empty blob is a ledger with no marker and no counts, not a reason to skip: a
+    # truncation must not shed burnDownSeeded, and one already committed must not wedge
+    # every later commit on a parse error.
+    python3 - "$head_json" "$staged_json" <<'PY' || FOUND=1
 import json, sys
-old, new = map(json.loads, sys.argv[1:])
+old, new = (json.loads(a.strip() or "{}") for a in sys.argv[1:])
 old = old if isinstance(old, dict) else {}
 new = new if isinstance(new, dict) else {}
 old_burn = (old.get("ruleOverrides") or {}).get("burnDown", {})
@@ -121,7 +123,6 @@ for rule, value in sorted(new_burn.items()):
         print(f"quality-kit: ruleOverrides.burnDown[{rule}] rose {previous} → {value}. A burn-down count only goes down: fix the new violations instead. Only a kit-version increase may add a rule's starting count.", file=sys.stderr)
         raise SystemExit(1)
 PY
-    fi
   fi
 fi
 
